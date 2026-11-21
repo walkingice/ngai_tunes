@@ -3,7 +3,7 @@ use crate::protocol::{Command, Message, Order, Repeat, Snapshot, Status, Track};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
@@ -309,7 +309,7 @@ impl App {
     fn render(&self, frame: &mut Frame) {
         let [top, playback, info, keys] = Layout::vertical([
             Constraint::Min(3),
-            Constraint::Length(6),
+            Constraint::Length(5),
             Constraint::Length(3),
             Constraint::Length(3),
         ])
@@ -415,20 +415,6 @@ impl App {
             .map_or("—", |track| &track.title);
         let position = self.position();
         let duration = state.duration_ms.map_or_else(|| "—".into(), clock);
-        let width = usize::from(inner.width);
-        let filled = state
-            .duration_ms
-            .filter(|&duration| duration > 0)
-            .map_or(0, |duration| {
-                (u128::from(position.min(duration)) * width as u128 / u128::from(duration)) as usize
-            });
-        let progress = Line::from(vec![
-            Span::styled("█".repeat(filled), Style::default().fg(Color::Cyan)),
-            Span::styled(
-                "░".repeat(width - filled),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]);
         let order = match state.order {
             Order::Sequential => "→",
             Order::Random => "⤨",
@@ -442,14 +428,47 @@ impl App {
             Repeat::All => "↻",
             Repeat::One => "↻₁",
         };
-        let lines = vec![
-            Line::from(track),
-            Line::from(format!("{} / {duration}", clock(position))),
+        let [title, progress, controls] = Layout::vertical([Constraint::Length(1); 3]).areas(inner);
+        frame.render_widget(Line::from(track).centered(), title);
+        frame.render_widget(
+            playback_progress(position, state.duration_ms, progress.width.min(100)),
             progress,
-            Line::from(format!("{order}   ≪   {play}   ≫   {repeat}")).centered(),
-        ];
-        frame.render_widget(Paragraph::new(lines), inner);
+        );
+
+        let time = Line::from(format!("{} / {duration}", clock(position)));
+        let symbols = Line::from(format!("{order}   ≪   {play}   ≫   {repeat}"));
+        let time_width = (time.width() as u16).min(controls.width);
+        let centered_offset = controls.width.saturating_sub(symbols.width() as u16) / 2;
+        let offset = centered_offset
+            .max(time_width.saturating_add(1))
+            .min(controls.width);
+        frame.render_widget(time, controls);
+        frame.render_widget(
+            symbols,
+            Rect::new(
+                controls.x + offset,
+                controls.y,
+                controls.width - offset,
+                controls.height,
+            ),
+        );
     }
+}
+
+fn playback_progress(position: u64, duration: Option<u64>, width: u16) -> Line<'static> {
+    let filled = duration
+        .filter(|&duration| duration > 0)
+        .map_or(0, |duration| {
+            (u128::from(position.min(duration)) * u128::from(width) / u128::from(duration)) as usize
+        });
+    Line::from(vec![
+        Span::styled("█".repeat(filled), Style::default().fg(Color::Cyan)),
+        Span::styled(
+            "░".repeat(usize::from(width) - filled),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+    .centered()
 }
 
 fn clock(ms: u64) -> String {
