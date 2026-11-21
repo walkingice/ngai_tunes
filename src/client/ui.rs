@@ -301,7 +301,7 @@ impl App {
             Constraint::Min(3),
             Constraint::Length(5),
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(4),
         ])
         .areas(frame.area());
         let [sidebar, main] =
@@ -317,24 +317,26 @@ impl App {
             info,
         );
         let keys_text = match self.focus {
-            Focus::Sidebar => "Enter Open",
-            Focus::Main => "↑/↓ Select · Enter Play · Space Pause/Resume",
+            Focus::Sidebar => "[Enter] Open",
+            Focus::Main => "[↑/↓] Select   [Enter] Play   [Space] Pause/Resume",
             Focus::Playback
                 if self
                     .snapshot
                     .as_ref()
                     .is_some_and(|state| state.status == Status::Stopping) =>
             {
-                "Enter Restart · Space Pause/Resume · N/P Next/Previous · ←/→ Seek · R Repeat · O Order"
+                "[Enter] Restart   [Space] Pause/Resume   [N/P] Next/Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
             Focus::Playback => {
-                "Enter Stop · Space Pause/Resume · N/P Next/Previous · ←/→ Seek · R Repeat · O Order"
+                "[Enter] Stop   [Space] Pause/Resume   [N/P] Next/Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
         };
         frame.render_widget(
-            Paragraph::new(format!("{keys_text} · Tab Focus · Esc Detach · Q Quit"))
-                .block(Block::bordered().title("Hotkey"))
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(format!(
+                "{keys_text}   [Tab] Focus   [Esc] Detach   [Q] Quit"
+            ))
+            .block(Block::bordered().title("Hotkey"))
+            .wrap(Wrap { trim: true }),
             keys,
         );
         if self.confirm {
