@@ -62,14 +62,23 @@ impl App {
     }
 
     pub fn run(&mut self) -> io::Result<()> {
-        if self.source.is_none() {
-            let message = self.connection.as_ref().unwrap().first()?;
-            self.receive(message);
-        }
+        self.initialize();
         let mut terminal = ratatui::try_init()?;
         let result = self.event_loop(&mut terminal);
         let restored = ratatui::try_restore();
         result.and(restored)
+    }
+
+    fn initialize(&mut self) {
+        if self.source.is_some() {
+            return;
+        }
+        if let Some(message) = self.connection.as_ref().and_then(|peer| peer.first().ok()) {
+            self.receive(message);
+        } else {
+            self.connection = None;
+            self.info = "No daemon available to attach".into();
+        }
     }
 
     fn event_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> io::Result<()> {
@@ -415,6 +424,16 @@ fn clock(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attach_without_daemon_opens_an_empty_queue_with_a_message() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.initialize();
+        assert!(!app.key(KeyCode::Enter));
+        assert!(app.tracks.is_empty());
+        assert!(app.connection.is_none());
+        assert_eq!(app.info, "No daemon available to attach");
+    }
 
     #[test]
     fn empty_scan_and_cancel_quit_keep_the_client_open() {

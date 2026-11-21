@@ -6,18 +6,12 @@ use ipc::Connection;
 use std::path::PathBuf;
 
 pub fn run(directory: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    let (tracks, connection) = if let Some(path) = &directory {
-        (scan::scan(path)?, Connection::connect().ok())
+    let tracks = if let Some(path) = &directory {
+        scan::scan(path)?
     } else {
-        (
-            Vec::new(),
-            Some(
-                Connection::connect()
-                    .map_err(|error| format!("No daemon is reachable: {error}"))?,
-            ),
-        )
+        Vec::new()
     };
-    let mut app = ui::App::new(directory, tracks, connection);
+    let mut app = ui::App::new(directory, tracks, Connection::connect().ok());
     app.run()?;
     Ok(())
 }
