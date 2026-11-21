@@ -527,13 +527,18 @@ impl App {
             Constraint::Fill(2),
             Constraint::Min(5),
         ];
+        let highlight = if self.focus == Focus::Main {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White).bg(Color::DarkGray)
+        };
         let table = Table::new(rows, widths)
             .header(
                 Row::new(["", "Track", "Title", "Time", "Artist", "Album", "Genre"])
                     .style(Style::default().fg(Color::DarkGray)),
             )
             .block(self.panel(name, Focus::Main))
-            .row_highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+            .row_highlight_style(highlight);
         frame.render_stateful_widget(table, area, &mut state);
     }
 
@@ -614,6 +619,47 @@ fn clock(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_color_follows_focus_while_scrolling() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let tracks = (0..20)
+            .map(|number| Track {
+                path: format!("/{number}").into(),
+                title: format!("Track {number}"),
+                artist: None,
+                album: None,
+                track_number: Some(number),
+                duration_ms: None,
+                genre: None,
+            })
+            .collect();
+        let mut app = App::new(None, tracks, None);
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        for (cursor, focus, expected) in [
+            (0, Focus::Main, Color::Cyan),
+            (15, Focus::Main, Color::Cyan),
+            (4, Focus::Main, Color::Cyan),
+            (4, Focus::Playback, Color::DarkGray),
+            (4, Focus::Main, Color::Cyan),
+        ] {
+            app.cursor = cursor;
+            app.focus = focus;
+            terminal.draw(|frame| app.render(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let title = format!("Track {cursor}");
+            let selected_row = (0..buffer.area.height)
+                .find(|&y| {
+                    let line: String = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect();
+                    line.contains(&title)
+                })
+                .expect("selected track should be visible");
+            assert_eq!(buffer[(16, selected_row)].bg, expected);
+        }
+    }
 
     #[test]
     fn notices_use_configured_durations_and_colors() {
