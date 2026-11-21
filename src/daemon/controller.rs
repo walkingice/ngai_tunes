@@ -174,10 +174,10 @@ impl<E: Engine> Controller<E> {
                     return;
                 }
                 Err(StartError::Device(error)) => {
-                    self.state.error = Some(error);
+                    self.set_error(error);
                     return;
                 }
-                Err(StartError::Track(error)) => self.state.error = Some(error),
+                Err(StartError::Track(error)) => self.set_error(error),
             }
             candidate = self.adjacent(direction);
             if self.state.repeat == Repeat::All && candidate.is_some_and(|next| attempted[next]) {
@@ -185,6 +185,13 @@ impl<E: Engine> Controller<E> {
             }
         }
         self.shutdown = true;
+    }
+
+    fn set_error(&mut self, mut error: String) {
+        if error.len() > 1024 {
+            error.truncate(error.floor_char_boundary(1024));
+        }
+        self.state.error = Some(error);
     }
 
     pub fn tick(&mut self) {
@@ -205,7 +212,7 @@ impl<E: Engine> Controller<E> {
             }
             Some(Event::Device(error)) => {
                 self.stop();
-                self.state.error = Some(error);
+                self.set_error(error);
             }
             _ => return,
         }
@@ -295,5 +302,42 @@ mod tests {
         player.engine.event = Some(Event::End(player.generation));
         player.tick();
         assert!(player.shutdown);
+    }
+
+    #[test]
+    fn random_previous_retraces_order_and_repeat_one_only_affects_eof() {
+        let mut player = Controller::new(Fake::default());
+        player.rng = fastrand::Rng::with_seed(123);
+        player.command(Command::SetOrder(Order::Random)).unwrap();
+        replace(&mut player, &["/one", "/two", "/three"]);
+        player.command(Command::SetRepeat(Repeat::One)).unwrap();
+        player.command(Command::Next).unwrap();
+        let second = player.snapshot().current;
+        assert_ne!(second, Some(0));
+        player.engine.event = Some(Event::End(player.generation));
+        player.tick();
+        assert_eq!(player.snapshot().current, second);
+        player.command(Command::Previous).unwrap();
+        assert_eq!(player.snapshot().current, Some(0));
+        player.command(Command::SetRepeat(Repeat::Off)).unwrap();
+        player.command(Command::Next).unwrap();
+        player.command(Command::Next).unwrap();
+        assert_ne!(player.snapshot().current, second);
+        player.engine.event = Some(Event::End(player.generation));
+        player.tick();
+        assert!(player.shutdown);
+    }
+
+    #[test]
+    fn all_broken_tracks_exhaust_even_with_repeat_all() {
+        let mut player = Controller::new(Fake::default());
+        player.command(Command::SetRepeat(Repeat::All)).unwrap();
+        player.command(Command::SetOrder(Order::Random)).unwrap();
+        replace(
+            &mut player,
+            &["/one/broken", "/two/broken", "/three/broken"],
+        );
+        assert!(player.shutdown);
+        assert_eq!(player.generation, 3);
     }
 }

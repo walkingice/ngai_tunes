@@ -168,6 +168,7 @@ fn respond(
 }
 
 fn connect_peer(id: u64, stream: UnixStream, input: SyncSender<Input>) -> io::Result<Peer> {
+    stream.set_nonblocking(false)?;
     let mut writer = stream.try_clone()?;
     writer.set_write_timeout(Some(Duration::from_secs(1)))?;
     let reader = stream.try_clone()?;
