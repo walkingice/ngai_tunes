@@ -1,4 +1,4 @@
-use super::{App, FACETS, Focus, Page, ScanDialog};
+use super::{App, Facet, Focus, Page, ScanDialog};
 use crate::protocol::{Order, Repeat, Status};
 use ratatui::{
     Frame,
@@ -201,10 +201,10 @@ impl App {
     fn render_library(&self, frame: &mut Frame, area: Rect) {
         let [facets, songs] =
             Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(area);
-        let columns = Layout::horizontal([Constraint::Fill(1); FACETS.len()]).split(facets);
-        for (index, name) in FACETS.into_iter().enumerate() {
-            let focus = Focus::Filter(index);
-            let filter = &self.library.filters[index];
+        let columns = Layout::horizontal([Constraint::Fill(1); Facet::ALL.len()]).split(facets);
+        for (facet, &column) in Facet::ALL.into_iter().zip(columns.iter()) {
+            let focus = Focus::Filter(facet);
+            let filter = self.library.filter(facet);
             let items = std::iter::once("All")
                 .chain(filter.values.iter().map(String::as_str))
                 .enumerate()
@@ -213,10 +213,10 @@ impl App {
                     format!("{marker} {label}")
                 });
             let list = List::new(items)
-                .block(self.panel(name.into(), focus))
+                .block(self.panel(facet.label().into(), focus))
                 .highlight_style(self.selection_style(focus));
             let mut state = ListState::default().with_selected(Some(filter.cursor));
-            frame.render_stateful_widget(list, columns[index], &mut state);
+            frame.render_stateful_widget(list, column, &mut state);
         }
         self.render_list(frame, songs);
     }

@@ -2,7 +2,7 @@ mod render;
 
 use super::{
     ipc::Connection,
-    library::{self, FACETS, Library},
+    library::{self, Facet, Library},
     recursive_scan::Scan,
 };
 use crate::protocol::{Command, Message, Order, Repeat, Snapshot, Status, Track};
@@ -72,7 +72,7 @@ impl Page {
 
     fn main_focus(self) -> Focus {
         if self == Self::Scanned {
-            Focus::Filter(0)
+            Focus::Filter(Facet::Genre)
         } else {
             Focus::Main
         }
@@ -101,7 +101,7 @@ impl Notice {
 #[derive(Clone, Copy, PartialEq)]
 enum Focus {
     Sidebar,
-    Filter(usize),
+    Filter(Facet),
     Main,
     Playback,
 }
@@ -414,16 +414,16 @@ impl App {
             KeyCode::Char('R') if self.page == Page::Scanned => self.library.reset_filters(),
             KeyCode::Tab => {
                 self.focus = match self.focus {
-                    Focus::Main if self.page == Page::Scanned => Focus::Filter(0),
-                    Focus::Filter(index) if index + 1 < FACETS.len() => Focus::Filter(index + 1),
-                    Focus::Main | Focus::Filter(_) => Focus::Playback,
+                    Focus::Main if self.page == Page::Scanned => Focus::Filter(Facet::Genre),
+                    Focus::Filter(facet) => facet.next().map_or(Focus::Playback, Focus::Filter),
+                    Focus::Main => Focus::Playback,
                     Focus::Sidebar | Focus::Playback => Focus::Main,
                 }
             }
             KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
             _ => match self.focus {
                 Focus::Sidebar => self.sidebar_key(key),
-                Focus::Filter(index) => self.filter_key(index, key),
+                Focus::Filter(facet) => self.filter_key(facet, key),
                 Focus::Main => self.main_key(key),
                 Focus::Playback => self.playback_key(key),
             },
@@ -440,13 +440,13 @@ impl App {
         }
     }
 
-    fn filter_key(&mut self, index: usize, key: KeyCode) {
+    fn filter_key(&mut self, facet: Facet, key: KeyCode) {
         match key {
             KeyCode::Up | KeyCode::Down => {
-                let filter = &mut self.library.filters[index];
+                let filter = self.library.filter_mut(facet);
                 filter.cursor = move_cursor(filter.cursor, filter.values.len() + 1, key);
             }
-            KeyCode::Enter => self.library.apply(index),
+            KeyCode::Enter => self.library.apply(facet),
             _ => {}
         }
     }
@@ -731,18 +731,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Vec::new(), None);
         let store = ConfigStore::new(dir.path().join("config.json"));
-        let track = |title: &str, genre: &str| crate::storage::database::ScanTrack {
+        let track = |title: &str, artist: &str| crate::storage::database::ScanTrack {
             path: dir.path().join(title),
             title: title.into(),
             duration_ms: None,
-            artists: vec![],
+            artists: vec![artist.into()],
             album: None,
-            genres: vec![genre.into()],
+            genres: vec![],
             track_number: None,
         };
         let mut writer = store.database().stage().unwrap();
-        writer.write(&track("First", "Jazz")).unwrap();
-        writer.write(&track("Second", "Rock")).unwrap();
+        writer.write(&track("First", "A")).unwrap();
+        writer.write(&track("Second", "B")).unwrap();
         writer.publish().unwrap();
         app.store = Some(store);
         app.reload_library();
@@ -753,23 +753,33 @@ mod tests {
         app.key(KeyCode::Down);
         app.key(KeyCode::Enter);
         assert!(app.page == Page::Scanned);
-        assert!(app.focus == Focus::Filter(0));
+        assert!(app.focus == Focus::Filter(Facet::Genre));
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Filter(Facet::Artist));
+        app.library.cursor = 1;
         app.key(KeyCode::Down);
         assert_eq!(app.library.songs.len(), 2);
+        assert_eq!(app.library.cursor, 1);
         app.key(KeyCode::Enter);
         assert_eq!(app.library.songs[0].title, "First");
         assert_eq!(app.library.songs.len(), 1);
-        for _ in FACETS {
-            app.key(KeyCode::Tab);
-        }
+        assert_eq!(app.library.cursor, 0);
+        app.key(KeyCode::Up);
+        assert_eq!(app.library.songs.len(), 1);
+        app.key(KeyCode::Enter);
+        assert_eq!(app.library.songs.len(), 2);
+        app.key(KeyCode::Down);
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Tab);
+        app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Playback);
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Main);
         assert_eq!(app.songs().0.len(), 1);
         app.key(KeyCode::Char('R'));
         assert_eq!(app.songs().0.len(), 2);
-        assert_eq!(app.library.filters[0].selected, 0);
-        assert_eq!(app.library.filters[0].cursor, 0);
+        assert_eq!(app.library.filter(Facet::Artist).selected, 0);
+        assert_eq!(app.library.filter(Facet::Artist).cursor, 0);
 
         std::fs::write(dir.path().join("database.jsonl"), b"{").unwrap();
         app.reload_library();
@@ -1108,9 +1118,9 @@ mod tests {
         app.page = Page::Scanned;
         app.key(KeyCode::Char('f'));
         assert!(app.focus == Focus::Main);
-        for index in 0..FACETS.len() {
+        for facet in Facet::ALL {
             app.key(KeyCode::Tab);
-            assert!(app.focus == Focus::Filter(index));
+            assert!(app.focus == Focus::Filter(facet));
         }
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Playback);
@@ -1135,7 +1145,7 @@ mod tests {
 
         app.page = Page::Scanned;
         app.key(KeyCode::Tab);
-        assert!(app.focus == Focus::Filter(0));
+        assert!(app.focus == Focus::Filter(Facet::Genre));
         app.key(KeyCode::Char('S'));
         assert!(app.focus == Focus::Main);
 

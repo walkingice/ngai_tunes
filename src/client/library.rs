@@ -4,12 +4,48 @@ use crate::{
 };
 use std::{collections::BTreeSet, io, sync::mpsc, thread};
 
-pub const FACETS: [&str; 3] = ["Genres", "Artists", "Albums"];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Facet {
+    Genre,
+    Artist,
+    Album,
+}
+
+impl Facet {
+    pub(super) const ALL: [Self; 3] = [Self::Genre, Self::Artist, Self::Album];
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Genre => "Genres",
+            Self::Artist => "Artists",
+            Self::Album => "Albums",
+        }
+    }
+
+    pub(super) fn next(self) -> Option<Self> {
+        Self::ALL.get(self.index() + 1).copied()
+    }
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|&facet| facet == self)
+            .expect("all facets are ordered")
+    }
+
+    fn tags(self, track: &ScanTrack) -> &[String] {
+        match self {
+            Self::Genre => &track.genres,
+            Self::Artist => &track.artists,
+            Self::Album => track.album.as_slice(),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Library {
     entries: Vec<ScanTrack>,
-    pub filters: [Filter; 3],
+    filters: [Filter; Facet::ALL.len()],
     pub songs: Vec<Track>,
     pub cursor: usize,
 }
@@ -33,10 +69,10 @@ pub fn load(database: Database) -> io::Result<mpsc::Receiver<io::Result<Library>
 
 impl Library {
     fn new(entries: Vec<ScanTrack>) -> Self {
-        let filters = std::array::from_fn(|index| Filter {
+        let filters = Facet::ALL.map(|facet| Filter {
             values: entries
                 .iter()
-                .flat_map(|track| tags(track, index))
+                .flat_map(|track| facet.tags(track))
                 .cloned()
                 .collect::<BTreeSet<_>>()
                 .into_iter()
@@ -52,8 +88,16 @@ impl Library {
         library
     }
 
-    pub fn apply(&mut self, index: usize) {
-        let filter = &mut self.filters[index];
+    pub(super) fn filter(&self, facet: Facet) -> &Filter {
+        &self.filters[facet.index()]
+    }
+
+    pub(super) fn filter_mut(&mut self, facet: Facet) -> &mut Filter {
+        &mut self.filters[facet.index()]
+    }
+
+    pub(super) fn apply(&mut self, facet: Facet) {
+        let filter = self.filter_mut(facet);
         if filter.selected != filter.cursor {
             filter.selected = filter.cursor;
             self.update_songs();
@@ -69,27 +113,20 @@ impl Library {
     }
 
     fn update_songs(&mut self) {
-        self.songs = self
-            .entries
-            .iter()
-            .filter(|track| {
-                self.filters.iter().enumerate().all(|(index, filter)| {
-                    filter.selected.checked_sub(1).is_none_or(|selected| {
-                        tags(track, index).contains(&filter.values[selected])
+        self.songs =
+            self.entries
+                .iter()
+                .filter(|track| {
+                    Facet::ALL.into_iter().all(|facet| {
+                        let filter = self.filter(facet);
+                        filter.selected.checked_sub(1).is_none_or(|selected| {
+                            facet.tags(track).contains(&filter.values[selected])
+                        })
                     })
                 })
-            })
-            .map(to_song)
-            .collect();
+                .map(to_song)
+                .collect();
         self.cursor = 0;
-    }
-}
-
-fn tags(track: &ScanTrack, index: usize) -> &[String] {
-    match index {
-        0 => &track.genres,
-        1 => &track.artists,
-        _ => track.album.as_slice(),
     }
 }
 
@@ -134,15 +171,15 @@ mod tests {
             track("Fourth", &["Jazz"], &["A"], "X"),
         ]);
         assert_eq!(library.songs.len(), 4);
-        assert_eq!(library.filters[0].values, ["Jazz", "Pop"]);
-        for (index, cursor) in [1, 2, 1].into_iter().enumerate() {
-            library.filters[index].cursor = cursor;
-            library.apply(index);
+        assert_eq!(library.filter(Facet::Genre).values, ["Jazz", "Pop"]);
+        for (facet, cursor) in Facet::ALL.into_iter().zip([1, 2, 1]) {
+            library.filter_mut(facet).cursor = cursor;
+            library.apply(facet);
         }
         assert_eq!(library.songs.len(), 1);
         assert_eq!(library.songs[0].title, "First");
-        library.filters[0].cursor = 0;
-        library.apply(0);
+        library.filter_mut(Facet::Genre).cursor = 0;
+        library.apply(Facet::Genre);
         assert_eq!(library.songs.len(), 2);
         library.reset_filters();
         assert_eq!(library.songs.len(), 4);
