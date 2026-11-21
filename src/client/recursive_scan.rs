@@ -2,6 +2,7 @@ use super::scan::{directory_entries, read_scan_track};
 use crate::storage::database::{Database, ScanWriter};
 use std::{
     collections::HashSet,
+    ffi::OsString,
     io,
     path::{Path, PathBuf},
     sync::{
@@ -65,13 +66,60 @@ impl Progress {
     }
 }
 
+fn expand_path(path: &str, lookup: impl Fn(&str) -> Option<OsString>) -> io::Result<PathBuf> {
+    let name_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let variable = |name: &str| {
+        if name.is_empty() || !name.bytes().all(name_byte) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid path variable name",
+            ));
+        }
+        lookup(name)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{name} is not set")))
+    };
+    let (mut output, mut rest) = match path.strip_prefix("~/") {
+        Some(rest) => {
+            let mut home = variable("HOME")?;
+            home.push("/");
+            (home, rest)
+        }
+        None if path == "~" => return variable("HOME").map(PathBuf::from),
+        None => (OsString::new(), path),
+    };
+    while let Some((literal, tail)) = rest.split_once('$') {
+        output.push(literal);
+        if let Some(remaining) = tail.strip_prefix('$') {
+            output.push("$");
+            rest = remaining;
+        } else if let Some(braced) = tail.strip_prefix('{') {
+            let (name, remaining) = braced.split_once('}').ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "Unclosed path variable")
+            })?;
+            output.push(variable(name)?);
+            rest = remaining;
+        } else {
+            let length = tail.bytes().take_while(|byte| name_byte(*byte)).count();
+            if length == 0 {
+                output.push("$");
+            } else {
+                output.push(variable(&tail[..length])?);
+            }
+            rest = &tail[length..];
+        }
+    }
+    output.push(rest);
+    Ok(PathBuf::from(output))
+}
+
 fn scan_roots(roots: Vec<String>, state: &Progress) -> io::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     let mut unique = HashSet::new();
     for root in roots {
         state.check()?;
-        let root = PathBuf::from(root);
-        let path = root.canonicalize().map_err(|error| at(&root, error))?;
+        let path = expand_path(&root, |name| std::env::var_os(name))
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| at(Path::new(&root), error))?;
         if unique.insert(path.clone()) {
             paths.push(path);
         }
@@ -121,6 +169,31 @@ mod tests {
         prelude::{Accessor, TagExt},
     };
     use std::fs;
+
+    #[test]
+    fn expands_home_and_environment_variables_in_scan_paths() {
+        let expand = |path| {
+            expand_path(path, |name| match name {
+                "HOME" => Some("/home/listener".into()),
+                "LIBRARY" => Some("my music".into()),
+                _ => None,
+            })
+        };
+        assert_eq!(expand("~").unwrap(), Path::new("/home/listener"));
+        assert_eq!(
+            expand("~/Music").unwrap(),
+            Path::new("/home/listener/Music")
+        );
+        assert_eq!(
+            expand("$HOME/${LIBRARY}/live").unwrap(),
+            Path::new("/home/listener/my music/live")
+        );
+        assert_eq!(expand("music/$").unwrap(), Path::new("music/$"));
+        assert!(expand("~/${UNSET}").is_err());
+        assert_eq!(expand("music/$$HOME").unwrap(), Path::new("music/$HOME"));
+        assert!(expand("${HOME").is_err());
+        assert!(expand("${A=B}").is_err());
+    }
 
     #[test]
     fn keeps_only_outermost_unique_scan_roots() {
