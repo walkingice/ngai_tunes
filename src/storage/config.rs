@@ -1,3 +1,4 @@
+use crate::protocol::Repeat;
 use serde::{Deserialize, Serialize};
 use std::{
     fs, io,
@@ -11,6 +12,7 @@ pub struct Config {
     pub warning_seconds: u64,
     pub error_seconds: u64,
     pub scan_directories: Vec<String>,
+    pub repeat: Repeat,
 }
 
 impl Default for Config {
@@ -20,6 +22,7 @@ impl Default for Config {
             warning_seconds: 5,
             error_seconds: 10,
             scan_directories: Vec::new(),
+            repeat: Repeat::Off,
         }
     }
 }
@@ -54,6 +57,30 @@ impl ConfigStore {
     }
 
     pub fn save_if_unchanged(&self, original: &Config, config: &Config) -> io::Result<()> {
+        let _lock = self.lock()?;
+        let mut current = self.load()?;
+        // The daemon owns repeat mode and can update it while a client is open.
+        let repeat = current.repeat;
+        current.repeat = original.repeat;
+        if current != *original {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Config changed in another client; restart to reload it",
+            ));
+        }
+        let mut config = config.clone();
+        config.repeat = repeat;
+        self.save(&config)
+    }
+
+    pub fn save_repeat(&self, repeat: Repeat) -> io::Result<()> {
+        let _lock = self.lock()?;
+        let mut config = self.load()?;
+        config.repeat = repeat;
+        self.save(&config)
+    }
+
+    fn lock(&self) -> io::Result<fs::File> {
         use std::os::fd::AsRawFd;
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
@@ -66,16 +93,10 @@ impl ConfigStore {
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        if self.load()? != *original {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "Config changed in another client; restart to reload it",
-            ));
-        }
-        self.save(config)
+        Ok(lock)
     }
 
-    pub fn save(&self, config: &Config) -> io::Result<()> {
+    fn save(&self, config: &Config) -> io::Result<()> {
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
         let data = serde_json::to_vec_pretty(config).map_err(io::Error::other)?;
@@ -146,10 +167,26 @@ mod tests {
         fs::create_dir_all(dir.path().join("nested")).unwrap();
         fs::write(&store.path, r#"{"info_seconds":1}"#).unwrap();
         let mut config = store.load().unwrap();
+        assert_eq!(config.repeat, Repeat::Off);
         config.scan_directories.push("/music/音樂".into());
         store.save(&config).unwrap();
         let loaded = store.load().unwrap();
         assert_eq!(loaded.info_seconds, 1);
         assert_eq!(loaded.scan_directories, ["/music/音樂"]);
+    }
+
+    #[test]
+    fn scan_settings_and_repeat_updates_preserve_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConfigStore::new(dir.path().join("config.json"));
+        let original = store.load().unwrap();
+        store.save_repeat(Repeat::All).unwrap();
+        let mut updated = original.clone();
+        updated.scan_directories.push("/music".into());
+        store.save_if_unchanged(&original, &updated).unwrap();
+        assert_eq!(store.load().unwrap().repeat, Repeat::All);
+        store.save_repeat(Repeat::One).unwrap();
+        updated.repeat = Repeat::One;
+        assert_eq!(store.load().unwrap(), updated);
     }
 }
