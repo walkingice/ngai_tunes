@@ -18,7 +18,10 @@ use ratatui::{
 use std::{
     io,
     path::PathBuf,
-    sync::mpsc::{Receiver, TryRecvError},
+    sync::{
+        Arc,
+        mpsc::{Receiver, TryRecvError},
+    },
     time::{Duration, Instant},
 };
 
@@ -197,13 +200,7 @@ impl App {
     }
 
     fn initialize(&mut self) {
-        if self.source.is_some() {
-            return;
-        }
-        if let Some(message) = self.connection.as_ref().and_then(|peer| peer.first().ok()) {
-            self.receive(message);
-        } else {
-            self.connection = None;
+        if self.source.is_none() && self.connection.is_none() {
             self.show_notice(Level::Warning, "No daemon available to attach");
         }
     }
@@ -249,8 +246,14 @@ impl App {
             if !self.initialized {
                 self.cursor = state.current.unwrap_or(0);
             }
-            self.tracks.clone_from(&state.queue);
-            self.cursor = self.cursor.min(self.tracks.len().saturating_sub(1));
+            if self
+                .snapshot
+                .as_ref()
+                .is_none_or(|old| !Arc::ptr_eq(&old.queue, &state.queue))
+            {
+                self.tracks.clone_from(&state.queue);
+                self.cursor = self.cursor.min(self.tracks.len().saturating_sub(1));
+            }
         }
         if let Some(error) = &state.error
             && self.snapshot.as_ref().and_then(|old| old.error.as_ref()) != Some(error)
@@ -1283,7 +1286,7 @@ mod tests {
         let mut app = App::new(None, Vec::new(), None);
         let state = Snapshot {
             revision: 1,
-            queue: Vec::new(),
+            queue: Default::default(),
             current: None,
             status: Status::Stopping,
             position_ms: 0,
@@ -1331,7 +1334,7 @@ mod tests {
         for status in [Status::Stopping, Status::Pausing, Status::Playing] {
             app.snapshot = Some(Snapshot {
                 revision: 0,
-                queue: Vec::new(),
+                queue: Default::default(),
                 current: None,
                 status,
                 position_ms: 0,
@@ -1354,7 +1357,7 @@ mod tests {
         assert!(app.playback_command(KeyCode::Right).is_none());
         app.snapshot = Some(Snapshot {
             revision: 0,
-            queue: Vec::new(),
+            queue: Default::default(),
             current: Some(0),
             status: Status::Pausing,
             position_ms: 3000,
@@ -1385,7 +1388,7 @@ mod tests {
         let mut app = App::new(None, Vec::new(), None);
         app.snapshot = Some(Snapshot {
             revision: 0,
-            queue: Vec::new(),
+            queue: Default::default(),
             current: None,
             status: Status::Stopping,
             position_ms: 0,

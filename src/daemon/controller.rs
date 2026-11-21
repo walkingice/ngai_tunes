@@ -19,7 +19,7 @@ impl<E: Engine> Controller<E> {
             engine,
             state: Snapshot {
                 revision: 0,
-                queue: Vec::new(),
+                queue: Default::default(),
                 current: None,
                 status: Status::Stopping,
                 position_ms: 0,
@@ -51,11 +51,12 @@ impl<E: Engine> Controller<E> {
         use Command::*;
         match command {
             Subscribe | GetState => return Ok(()),
+            UploadQueue { .. } => return Err("Unexpected queue segment"),
             ReplaceAndPlay { queue, selected } => {
                 if selected >= queue.len() || queue.iter().any(|track| !track.path.is_absolute()) {
                     return Err("Queue needs absolute paths and a valid selection");
                 }
-                self.state.queue = queue;
+                self.state.queue = queue.into();
                 self.state.current = Some(selected);
                 self.reset_cycle();
                 self.try_tracks(Some(selected), 1);

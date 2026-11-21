@@ -1,6 +1,8 @@
 use crate::{
     daemon::runtime::{ROOT, SOCKET, verify_directory},
-    protocol::{Command, Message, Request, VERSION, encode, read_frame},
+    protocol::{
+        Command, IncomingState, Message, Request, VERSION, encode, encode_upload, read_frame,
+    },
 };
 use std::{
     io::{self, BufReader, Write},
@@ -16,7 +18,6 @@ pub struct Connection {
     stream: UnixStream,
     receiver: Receiver<Message>,
     id: u64,
-    initial: Option<Message>,
 }
 
 impl Connection {
@@ -27,11 +28,17 @@ impl Connection {
         let mut reader = BufReader::new(stream.try_clone()?);
         let (send, receiver) = mpsc::sync_channel(16);
         thread::spawn(move || {
+            let mut state = IncomingState::default();
             while let Ok(Some(line)) = read_frame(&mut reader) {
-                let Ok(message) = serde_json::from_slice(&line) else {
+                let Ok(wire) = serde_json::from_slice(&line) else {
                     break;
                 };
-                if send.send(message).is_err() {
+                let Ok(message) = state.receive(wire) else {
+                    break;
+                };
+                if let Some(message) = message
+                    && send.send(message).is_err()
+                {
                     break;
                 }
             }
@@ -40,31 +47,15 @@ impl Connection {
             stream,
             receiver,
             id: 0,
-            initial: None,
         };
         connection.send(Command::Subscribe)?;
         Ok(connection)
     }
 
-    fn ready(mut self, timeout: Duration) -> io::Result<Self> {
-        let message = self
-            .receiver
-            .recv_timeout(timeout)
-            .map_err(io::Error::other)?;
-        if message.request_id != Some(1) || message.state.is_none() {
-            return Err(io::Error::other(message.error.map_or_else(
-                || "Invalid daemon handshake".into(),
-                |error| error.message,
-            )));
-        }
-        self.initial = Some(message);
-        Ok(self)
-    }
-
     pub fn start() -> io::Result<Self> {
-        if let Ok(connection) =
-            Self::connect().and_then(|peer| peer.ready(Duration::from_millis(250)))
-        {
+        // The subscription snapshot can span many frames. Do not wait for it
+        // before sending commands to an already bound daemon.
+        if let Ok(connection) = Self::connect() {
             return Ok(connection);
         }
         let mut process = Process::new(std::env::current_exe()?);
@@ -88,9 +79,7 @@ impl Connection {
         });
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            if let Ok(connection) =
-                Self::connect().and_then(|peer| peer.ready(Duration::from_millis(250)))
-            {
+            if let Ok(connection) = Self::connect() {
                 return Ok(connection);
             }
             if Instant::now() >= deadline {
@@ -105,19 +94,23 @@ impl Connection {
 
     pub fn send(&mut self, command: Command) -> io::Result<u64> {
         self.id += 1;
-        let data = encode(&Request {
-            version: VERSION,
-            request_id: self.id,
-            command,
-        })?;
-        self.stream.write_all(&data)?;
+        if let Command::ReplaceAndPlay { queue, selected } = command {
+            for frame in encode_upload(self.id, &queue, selected)? {
+                self.stream.write_all(&frame)?;
+            }
+        } else {
+            let data = encode(&Request {
+                version: VERSION,
+                request_id: self.id,
+                command,
+            })?;
+            self.stream.write_all(&data)?;
+        }
         Ok(self.id)
     }
 
     pub fn next(&mut self) -> Result<Message, TryRecvError> {
-        self.initial
-            .take()
-            .map_or_else(|| self.receiver.try_recv(), Ok)
+        self.receiver.try_recv()
     }
 
     pub fn finish(&mut self, command: Command) {
@@ -131,12 +124,6 @@ impl Connection {
                 break;
             }
         }
-    }
-
-    pub fn first(&self) -> io::Result<Message> {
-        self.receiver
-            .recv_timeout(Duration::from_secs(2))
-            .map_err(io::Error::other)
     }
 }
 

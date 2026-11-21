@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{io, path::PathBuf, sync::Arc};
+
+mod segments;
+pub use segments::{QueueSegment, QueueTransfer, encode_segments};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Track {
@@ -39,7 +42,8 @@ pub enum Order {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Snapshot {
     pub revision: u64,
-    pub queue: Vec<Track>,
+    #[serde(skip)]
+    pub queue: Arc<Vec<Track>>,
     pub current: Option<usize>,
     pub status: Status,
     pub position_ms: u64,
@@ -54,13 +58,23 @@ pub struct Snapshot {
 pub enum Command {
     Subscribe,
     GetState,
-    ReplaceAndPlay { queue: Vec<Track>, selected: usize },
+    #[serde(skip)]
+    ReplaceAndPlay {
+        queue: Vec<Track>,
+        selected: usize,
+    },
+    UploadQueue {
+        segment: QueueSegment,
+        selected: Option<usize>,
+    },
     TogglePause,
     Pause,
     Resume,
     Stop,
     Restart,
-    Seek { position_ms: u64 },
+    Seek {
+        position_ms: u64,
+    },
     Next,
     Previous,
     SetRepeat(Repeat),
@@ -69,7 +83,7 @@ pub enum Command {
     ExitOnStopping,
 }
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -84,6 +98,71 @@ pub struct Message {
     pub request_id: Option<u64>,
     pub state: Option<Snapshot>,
     pub error: Option<Failure>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WireMessage {
+    Queue {
+        revision: u64,
+        segment: QueueSegment,
+    },
+    Message {
+        queue_revision: Option<u64>,
+        message: Message,
+    },
+}
+
+impl WireMessage {
+    pub fn reply(message: Message) -> Self {
+        Self::Message {
+            queue_revision: None,
+            message,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct IncomingState {
+    pending: QueueTransfer,
+    queue: Option<(u64, Arc<Vec<Track>>)>,
+}
+
+impl IncomingState {
+    pub fn receive(&mut self, wire: WireMessage) -> Result<Option<Message>, &'static str> {
+        match wire {
+            WireMessage::Queue { revision, segment } => {
+                if let Some(queue) = self.pending.push(revision, segment)? {
+                    self.queue = Some((revision, Arc::new(queue)));
+                }
+                Ok(None)
+            }
+            WireMessage::Message {
+                queue_revision,
+                mut message,
+            } => {
+                if let Some(state) = &mut message.state {
+                    let (revision, queue) = self.queue.as_ref().ok_or("Missing snapshot queue")?;
+                    if queue_revision != Some(*revision) {
+                        return Err("Snapshot queue revision mismatch");
+                    }
+                    state.queue = Arc::clone(queue);
+                }
+                Ok(Some(message))
+            }
+        }
+    }
+}
+
+pub fn encode_upload(id: u64, queue: &[Track], selected: usize) -> io::Result<Vec<Vec<u8>>> {
+    encode_segments(queue, |segment, sizing| {
+        let selected = (sizing || segment.segment_index == 1).then_some(selected);
+        encode(&Request {
+            version: VERSION,
+            request_id: id,
+            command: Command::UploadQueue { segment, selected },
+        })
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
