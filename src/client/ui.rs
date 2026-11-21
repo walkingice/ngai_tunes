@@ -328,22 +328,22 @@ impl App {
         );
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
-            Focus::Main => "[↑/↓] Select   [Enter] Play   [←/→] Seek   [Space] Pause/Resume",
+            Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
             Focus::Playback
                 if self
                     .snapshot
                     .as_ref()
                     .is_some_and(|state| state.status == Status::Stopping) =>
             {
-                "[Enter] Restart   [Space] Pause/Resume   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] ↺   [Space] ▶/⏸   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
             Focus::Playback => {
-                "[Enter] Stop   [Space] Pause/Resume   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "{keys_text}   [Tab] Focus   [Esc] Detach   [Q] Quit"
+                "[Tab] Focus   {keys_text}   [Esc] Detach   [Q] Quit"
             ))
             .block(Block::bordered().title("Hotkey"))
             .wrap(Wrap { trim: true }),
@@ -439,19 +439,18 @@ impl App {
         let symbols = Line::from(format!("{order}   ≪   {play}   ≫   {repeat}"));
         let time_width = (time.width() as u16).min(controls.width);
         let centered_offset = controls.width.saturating_sub(symbols.width() as u16) / 2;
-        let offset = centered_offset
-            .max(time_width.saturating_add(1))
-            .min(controls.width);
-        frame.render_widget(time, controls);
+        let available = controls.width.saturating_sub(time_width.saturating_add(1));
+        let offset = centered_offset.min(available.saturating_sub(symbols.width() as u16));
         frame.render_widget(
             symbols,
             Rect::new(
                 controls.x + offset,
                 controls.y,
-                controls.width - offset,
+                available.saturating_sub(offset),
                 controls.height,
             ),
         );
+        frame.render_widget(time.right_aligned(), controls);
     }
 }
 
