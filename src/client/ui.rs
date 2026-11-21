@@ -67,7 +67,7 @@ impl Page {
     const TABS: [(Self, &str); 3] = [
         (Self::Playing, "Playing"),
         (Self::Scanned, "Scanned"),
-        (Self::Scan, "Scan"),
+        (Self::Scan, "Settings"),
     ];
 
     fn step(self, offset: usize) -> Self {
