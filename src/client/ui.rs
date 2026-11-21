@@ -544,7 +544,7 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "[Tab] Focus   {keys_text}   [Esc] Detach   [Q] Quit"
+                "[Tab] Focus   {keys_text}   [Esc] Detach   [q] Quit"
             ))
             .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
