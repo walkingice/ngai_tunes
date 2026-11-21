@@ -4,18 +4,6 @@ These are proposed changes. Start with one numbered item per patch. Run
 `cargo test` before and after each extraction. Keep wire formats, stored
 files and keyboard behavior compatible throughout.
 
-## 3. Name the library facets
-
-In [library.rs](../src/client/library.rs), the facet labels, tag lookup
-and filter array share a numeric ordering. The wildcard arm in tags
-maps every unexpected index to Album. Introduce a Facet enum with an
-ordered list, a label method and an exhaustive tag lookup. Convert to an
-array index in one place. Pass a Facet from the UI when applying a filter.
-
-Keep the highlighted row distinct from the applied selection. Check that
-moving within Artists leaves Songs unchanged until Enter, that row zero
-accepts all artists, and that changing a filter resets the song cursor.
-
 ## 4. Isolate queue upload completion
 
 In [daemon/mod.rs](../src/daemon/mod.rs), handle_request validates
