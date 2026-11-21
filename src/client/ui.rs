@@ -61,21 +61,20 @@ enum Page {
     Playing,
     Scanned,
     Scan,
+    Directory,
 }
 
 impl Page {
-    const TABS: [(Self, &str); 3] = [
+    const TABS: [(Self, &str); 4] = [
         (Self::Playing, "Playing"),
         (Self::Scanned, "Scanned"),
         (Self::Scan, "Settings"),
+        (Self::Directory, "Directory"),
     ];
 
-    fn step(self, offset: usize) -> Self {
-        let index = Self::TABS
-            .iter()
-            .position(|(page, _)| *page == self)
-            .unwrap();
-        Self::TABS[(index + offset) % Self::TABS.len()].0
+    fn step(self, tabs: &[(Self, &str)], offset: usize) -> Self {
+        let index = tabs.iter().position(|(page, _)| *page == self).unwrap();
+        tabs[(index + offset) % tabs.len()].0
     }
 
     fn main_focus(self) -> Focus {
@@ -116,6 +115,8 @@ enum Focus {
 
 pub struct App {
     source: Option<PathBuf>,
+    directory_tracks: Vec<Track>,
+    directory_cursor: usize,
     tracks: Vec<Track>,
     cursor: usize,
     focus: Focus,
@@ -134,6 +135,7 @@ pub struct App {
     config_valid: bool,
     initialized: bool,
     pending: Option<u64>,
+    pending_play: Option<u64>,
 }
 
 impl App {
@@ -154,8 +156,15 @@ impl App {
                 .map(ToString::to_string)
         });
         let mut app = Self {
+            page: if source.is_some() {
+                Page::Directory
+            } else {
+                Page::Playing
+            },
             source,
-            tracks,
+            directory_tracks: tracks,
+            directory_cursor: 0,
+            tracks: Vec::new(),
             cursor: 0,
             focus: Focus::Main,
             connection,
@@ -165,7 +174,6 @@ impl App {
             notice_config: loaded.and_then(Result::ok).unwrap_or_default(),
             store,
             config_valid,
-            page: Page::Playing,
             library: Library::default(),
             library_load: None,
             scan_cursor: 0,
@@ -173,11 +181,15 @@ impl App {
             confirm: false,
             initialized: false,
             pending: None,
+            pending_play: None,
         };
         if let Some(error) = config_error {
             app.show_notice(Level::Error, format!("Could not load config: {error}"));
         } else if app.source.is_some() {
-            app.show_notice(Level::Info, format!("{} tracks found", app.tracks.len()));
+            app.show_notice(
+                Level::Info,
+                format!("{} tracks found", app.directory_tracks.len()),
+            );
         }
         app
     }
@@ -231,7 +243,14 @@ impl App {
         if message.request_id == self.pending && self.pending.is_some() {
             self.pending = None;
         }
+        let play_response = self.pending_play.is_some() && message.request_id == self.pending_play;
+        if play_response {
+            self.pending_play = None;
+        }
         if let Some(error) = message.error {
+            if play_response {
+                self.sync_queue();
+            }
             self.show_notice(Level::Error, error.message);
         }
         let Some(state) = message.state else { return };
@@ -242,18 +261,12 @@ impl App {
         {
             return;
         }
-        if self.source.is_none() {
-            if !self.initialized {
-                self.cursor = state.current.unwrap_or(0);
-            }
-            if self
-                .snapshot
-                .as_ref()
-                .is_none_or(|old| !Arc::ptr_eq(&old.queue, &state.queue))
-            {
-                self.tracks.clone_from(&state.queue);
-                self.cursor = self.cursor.min(self.tracks.len().saturating_sub(1));
-            }
+        let queue_changed = self
+            .snapshot
+            .as_ref()
+            .is_none_or(|old| !Arc::ptr_eq(&old.queue, &state.queue));
+        if !self.initialized && self.pending_play.is_none() {
+            self.cursor = state.current.unwrap_or(0);
         }
         if let Some(error) = &state.error
             && self.snapshot.as_ref().and_then(|old| old.error.as_ref()) != Some(error)
@@ -263,6 +276,18 @@ impl App {
         self.initialized = true;
         self.updated = Instant::now();
         self.snapshot = Some(state);
+        if self.pending_play.is_none() && queue_changed {
+            self.sync_queue();
+        }
+    }
+
+    fn sync_queue(&mut self) {
+        if let Some(state) = &self.snapshot {
+            self.tracks.clone_from(&state.queue);
+        } else {
+            self.tracks.clear();
+        }
+        self.cursor = self.cursor.min(self.tracks.len().saturating_sub(1));
     }
 
     fn poll_connection(&mut self) {
@@ -283,6 +308,9 @@ impl App {
 
     fn disconnect(&mut self) {
         self.connection = None;
+        if self.pending_play.take().is_some() {
+            self.sync_queue();
+        }
         if self
             .snapshot
             .as_ref()
@@ -317,17 +345,31 @@ impl App {
             return;
         }
         let queue = tracks.to_vec();
-        match Connection::start() {
-            Ok(connection) => {
-                self.connection = Some(connection);
-                self.pending = None;
-                self.snapshot = None;
-                self.send(Command::ReplaceAndPlay {
-                    queue,
-                    selected: cursor,
-                });
+        let mut connection = match Connection::start() {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.show_notice(Level::Error, error.to_string());
+                return;
             }
-            Err(error) => self.show_notice(Level::Error, error.to_string()),
+        };
+        let old_queue = std::mem::replace(&mut self.tracks, queue.clone());
+        let old_cursor = std::mem::replace(&mut self.cursor, cursor);
+        match connection.send(Command::ReplaceAndPlay {
+            queue,
+            selected: cursor,
+        }) {
+            Ok(id) => {
+                self.connection = Some(connection);
+                self.pending = Some(id);
+                self.pending_play = Some(id);
+                self.snapshot = None;
+                self.initialized = true;
+            }
+            Err(error) => {
+                self.tracks = old_queue;
+                self.cursor = old_cursor;
+                self.show_notice(Level::Error, error.to_string());
+            }
         }
     }
 
@@ -391,9 +433,11 @@ impl App {
                 }
             }
             KeyCode::Up if self.focus == Focus::Sidebar => {
-                self.page = self.page.step(Page::TABS.len() - 1)
+                self.page = self.page.step(self.tabs(), self.tabs().len() - 1)
             }
-            KeyCode::Down if self.focus == Focus::Sidebar => self.page = self.page.step(1),
+            KeyCode::Down if self.focus == Focus::Sidebar => {
+                self.page = self.page.step(self.tabs(), 1)
+            }
             KeyCode::Up if self.focus == Focus::Main && self.page == Page::Scan => {
                 self.scan_cursor = self.scan_cursor.saturating_sub(1);
             }
@@ -407,10 +451,10 @@ impl App {
             KeyCode::Up | KeyCode::Down if self.focus == Focus::Main => {
                 let (songs, cursor) = self.songs();
                 let cursor = move_cursor(cursor, songs.len(), key);
-                if self.page == Page::Scanned {
-                    self.library.cursor = cursor;
-                } else {
-                    self.cursor = cursor;
+                match self.page {
+                    Page::Scanned => self.library.cursor = cursor,
+                    Page::Directory => self.directory_cursor = cursor,
+                    _ => self.cursor = cursor,
                 }
             }
             KeyCode::Enter if self.focus == Focus::Main => self.play_selection(),
@@ -487,7 +531,7 @@ impl App {
 
     fn render(&self, frame: &mut Frame) {
         let [top, playback, info, keys] = Layout::vertical([
-            Constraint::Min(5),
+            Constraint::Min(self.tabs().len() as u16 + 2),
             Constraint::Length(5),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -497,18 +541,19 @@ impl App {
             Layout::horizontal([Constraint::Length(13), Constraint::Min(0)]).areas(top);
         frame.render_widget(
             Paragraph::new(
-                Page::TABS
-                    .map(|(page, label)| {
+                self.tabs()
+                    .iter()
+                    .map(|&(page, label)| {
                         let prefix = if self.page == page { "> " } else { "  " };
                         Line::from(format!("{prefix}{label}"))
                     })
-                    .to_vec(),
+                    .collect::<Vec<_>>(),
             )
             .block(self.panel("Tabs".into(), Focus::Sidebar)),
             sidebar,
         );
         match self.page {
-            Page::Playing => self.render_list(frame, main),
+            Page::Playing | Page::Directory => self.render_list(frame, main),
             Page::Scanned => self.render_library(frame, main),
             Page::Scan => self.render_scan(frame, main),
         }
@@ -804,11 +849,19 @@ impl App {
         );
     }
 
-    fn songs(&self) -> (&[Track], usize) {
-        if self.page == Page::Scanned {
-            (&self.library.songs, self.library.cursor)
+    fn tabs(&self) -> &[(Page, &str)] {
+        if self.source.is_some() {
+            &Page::TABS
         } else {
-            (&self.tracks, self.cursor)
+            &Page::TABS[..Page::TABS.len() - 1]
+        }
+    }
+
+    fn songs(&self) -> (&[Track], usize) {
+        match self.page {
+            Page::Scanned => (&self.library.songs, self.library.cursor),
+            Page::Directory => (&self.directory_tracks, self.directory_cursor),
+            _ => (&self.tracks, self.cursor),
         }
     }
 
@@ -874,10 +927,11 @@ impl App {
         });
         let name = match self.page {
             Page::Scanned => "Songs".into(),
-            _ => self
+            Page::Directory => self
                 .source
                 .as_ref()
-                .map_or_else(|| "Queue".into(), |source| source.display().to_string()),
+                .map_or_else(|| "Directory".into(), |source| source.display().to_string()),
+            _ => "Queue".into(),
         };
         let mut state = TableState::default().with_selected((!tracks.is_empty()).then_some(cursor));
         let time_width = tracks
@@ -1208,7 +1262,8 @@ mod tests {
                 genre: None,
             })
             .collect();
-        let mut app = App::new(None, tracks, None);
+        let mut app = App::new(None, Vec::new(), None);
+        app.tracks = tracks;
         let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
         for (cursor, focus, fg, bg) in [
             (0, Focus::Main, Color::Black, Color::Cyan),
@@ -1315,6 +1370,44 @@ mod tests {
             app.info.as_ref().unwrap().text,
             "No daemon available to attach"
         );
+    }
+
+    #[test]
+    fn directory_scan_and_playing_queue_are_independent() {
+        let track = |title: &str| Track {
+            path: format!("/{title}.flac").into(),
+            title: title.into(),
+            artist: None,
+            album: None,
+            track_number: None,
+            duration_ms: None,
+            genre: None,
+        };
+        let mut app = App::new(Some(".".into()), vec![track("Local")], None);
+        assert!(app.page == Page::Directory);
+        assert_eq!(app.songs().0[0].title, "Local");
+        app.page = Page::Playing;
+        assert!(app.songs().0.is_empty());
+        app.receive(Message {
+            request_id: None,
+            error: None,
+            state: Some(Snapshot {
+                revision: 1,
+                queue: Arc::new(vec![track("First"), track("Current")]),
+                current: Some(1),
+                status: Status::Playing,
+                position_ms: 0,
+                duration_ms: None,
+                repeat: Repeat::Off,
+                order: Order::Sequential,
+                error: None,
+            }),
+        });
+        assert_eq!(app.songs().0[1].title, "Current");
+        assert_eq!(app.songs().1, 1);
+        app.page = Page::Directory;
+        assert_eq!(app.songs().0[0].title, "Local");
+        assert_eq!(app.songs().1, 0);
     }
 
     #[test]
