@@ -311,7 +311,7 @@ impl App {
             Constraint::Min(3),
             Constraint::Length(5),
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .areas(frame.area());
         let [sidebar, main] =
@@ -345,7 +345,7 @@ impl App {
             Paragraph::new(format!(
                 "[Tab] Focus   {keys_text}   [Esc] Detach   [Q] Quit"
             ))
-            .block(Block::bordered().title("Hotkey"))
+            .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
             keys,
         );
