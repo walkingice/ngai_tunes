@@ -932,14 +932,6 @@ impl App {
                 Cell::from(track.genre.clone().unwrap_or_default()),
             ])
         });
-        let name = match self.page {
-            Page::Scanned => "Songs".into(),
-            Page::Browsing => self
-                .source
-                .as_ref()
-                .map_or_else(|| "Browsing".into(), |source| source.display().to_string()),
-            _ => "Queue".into(),
-        };
         let mut state = TableState::default().with_selected((!tracks.is_empty()).then_some(cursor));
         let time_width = tracks
             .iter()
@@ -969,7 +961,7 @@ impl App {
                 Row::new(["", "Track", "Title", "Time", "Artist", "Album", "Genre"])
                     .style(Style::default().fg(Color::DarkGray)),
             )
-            .block(self.panel(name, Focus::Main))
+            .block(self.panel("Songs".into(), Focus::Main))
             .row_highlight_style(self.selection_style(Focus::Main));
         frame.render_stateful_widget(table, area, &mut state);
     }
@@ -1253,6 +1245,23 @@ mod tests {
                 .scan_directories
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn song_lists_share_the_songs_panel_title() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut app = App::new(Some("music".into()), Vec::new(), None);
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        for page in [Page::Playing, Page::Browsing, Page::Scanned] {
+            app.page = page;
+            terminal
+                .draw(|frame| app.render_list(frame, frame.area()))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let title: String = (1..=5).map(|x| buffer[(x, 0)].symbol()).collect();
+            assert_eq!(title, "Songs");
+        }
     }
 
     #[test]
