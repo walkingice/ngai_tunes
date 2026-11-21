@@ -8,7 +8,7 @@ This file defines the user-visible contract for the first release. The
 ### Launch and attach
 
 - Ship one Rust binary for Linux and macOS. Client mode is the default.
-- With a directory argument, scan that directory. Use `ngai_tunes .` to
+- With a directory argument, scan that directory. Use `ngai-tunes .` to
   scan the current working directory. List MP3 and FLAC files directly inside it
   in the Playing tab. Read tags and fall back to the filename for the title.
 - Opening the scan TUI checks for an existing daemon so the Playback panel can
@@ -16,9 +16,9 @@ This file defines the user-visible contract for the first release. The
 - Main Enter checks for a daemon again, launches one if needed, replaces
   its queue with the displayed list and plays the focused entry from zero.
   An empty list has no playable selection and does not launch a daemon.
-- With no arguments, `ngai_tunes` attaches to the existing daemon, shows its
-  queue and selects the current track. `ngai_tunes --attach` explicitly requests the
-  same behavior. If no daemon is reachable, open the TUI with an empty Playing
+- With no arguments, `ngai-tunes` attaches to the existing daemon, shows its
+  queue and selects the current track. `ngai-tunes --attach` requests the same
+  behavior. If no daemon is reachable, open the TUI with an empty Playing
   queue and show a message at the bottom.
 - Use Unix-style long flags for modes and a positional argument for the
   directory. Accept at most one of `--attach`, `--daemon` and a directory.

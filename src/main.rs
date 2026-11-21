@@ -7,7 +7,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "A terminal MP3 and FLAC player")]
+#[command(name = env!("CARGO_BIN_NAME"), version, about = "A terminal MP3 and FLAC player")]
 struct Cli {
     #[arg(long, conflicts_with_all = ["daemon", "directory"])]
     attach: bool,
@@ -24,7 +24,7 @@ fn main() -> std::process::ExitCode {
     match run(cli) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("ngai_tunes: {error}");
+            eprintln!("{}: {error}", env!("CARGO_BIN_NAME"));
             std::process::ExitCode::FAILURE
         }
     }
@@ -41,6 +41,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uses_the_executable_name_in_cli_help() {
+        use clap::CommandFactory;
+
+        assert_eq!(Cli::command().get_name(), "ngai-tunes");
+    }
 
     #[test]
     fn parses_modes_and_paths() {
