@@ -4,9 +4,9 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
     io,
@@ -489,23 +489,11 @@ impl App {
             self.render_scan_dialog(frame, dialog);
         }
         if self.confirm {
-            let [_, middle, _] = Layout::vertical([
-                Constraint::Fill(1),
-                Constraint::Length(4),
-                Constraint::Fill(1),
-            ])
-            .areas(frame.area());
-            let [_, dialog, _] = Layout::horizontal([
-                Constraint::Fill(1),
-                Constraint::Length(40),
-                Constraint::Fill(1),
-            ])
-            .areas(middle);
-            frame.render_widget(Clear, dialog);
-            frame.render_widget(
-                Paragraph::new("Stop playback and exit?\nEnter/Y Confirm · Esc/N Cancel")
-                    .block(Block::bordered().title("Quit")),
-                dialog,
+            render_dialog(
+                frame,
+                "Quit",
+                "Stop playback and exit?",
+                "[Enter/Y] Confirm    [Esc/N] Cancel",
             );
         }
     }
@@ -628,25 +616,17 @@ impl App {
     }
 
     fn render_scan_dialog(&self, frame: &mut Frame, dialog: &ScanDialog) {
-        let height = 7.min(frame.area().height);
-        let width = 60.min(frame.area().width);
-        let area = Rect::new(
-            frame.area().x + (frame.area().width - width) / 2,
-            frame.area().y + (frame.area().height - height) / 2,
-            width,
-            height,
-        );
-        frame.render_widget(Clear, area);
-        let (title, text) = match dialog {
+        let (title, text, buttons) = match dialog {
             ScanDialog::Delete(index) => (
                 "Delete directory",
                 format!(
-                    "Delete this scan directory?\n\n{}\n\n[Enter/Y] Delete    [Esc/N] Cancel",
-                    self.notice_config.scan_directories[*index]
-                        .chars()
-                        .take(width.saturating_sub(4) as usize)
-                        .collect::<String>()
+                    "Delete this scan directory?\n{}",
+                    path_tail(
+                        &self.notice_config.scan_directories[*index],
+                        frame.area().width.min(60).saturating_sub(4) as usize
+                    )
                 ),
+                "[Enter/Y] Delete    [Esc/N] Cancel",
             ),
             ScanDialog::Edit { index, text } => (
                 if index.is_some() {
@@ -655,23 +635,13 @@ impl App {
                     "Add directory"
                 },
                 format!(
-                    "Directory path:\n{}\n\n[Enter] Save    [Esc] Cancel",
-                    text.chars()
-                        .rev()
-                        .take(width.saturating_sub(4) as usize)
-                        .collect::<String>()
-                        .chars()
-                        .rev()
-                        .collect::<String>()
+                    "Directory path:\n{}",
+                    path_tail(text, frame.area().width.min(60).saturating_sub(4) as usize)
                 ),
+                "[Enter] Save    [Esc] Cancel",
             ),
         };
-        frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .block(Block::bordered().title(title)),
-            area,
-        );
+        render_dialog(frame, title, &text, buttons);
     }
 
     fn render_list(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
@@ -799,6 +769,50 @@ impl App {
         );
         frame.render_widget(time.right_aligned(), controls);
     }
+}
+
+fn path_tail(path: &str, width: usize) -> String {
+    if Line::from(path).width() <= width {
+        return path.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut tail = String::new();
+    let mut remaining = width - 1;
+    for character in path.chars().rev() {
+        let character_width = Line::from(character.to_string()).width();
+        if character_width > remaining {
+            break;
+        }
+        remaining -= character_width;
+        tail.push(character);
+    }
+    format!("…{}", tail.chars().rev().collect::<String>())
+}
+
+fn render_dialog(frame: &mut Frame, title: &str, text: &str, buttons: &str) {
+    let height = 9.min(frame.area().height);
+    let width = 60.min(frame.area().width);
+    let area = Rect::new(
+        frame.area().x + (frame.area().width - width) / 2,
+        frame.area().y + (frame.area().height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    let block = Block::bordered().title(title).padding(Padding::uniform(1));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [content, actions] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), content);
+    frame.render_widget(
+        Paragraph::new(buttons)
+            .centered()
+            .style(Style::default().add_modifier(Modifier::BOLD)),
+        actions,
+    );
 }
 
 fn playback_progress(position: u64, duration: Option<u64>, width: u16) -> Line<'static> {
