@@ -14,7 +14,7 @@ pub struct Controller<E> {
 }
 
 impl<E: Engine> Controller<E> {
-    pub fn new(engine: E) -> Self {
+    pub fn new(engine: E, repeat: Repeat) -> Self {
         Self {
             engine,
             state: Snapshot {
@@ -24,7 +24,7 @@ impl<E: Engine> Controller<E> {
                 status: Status::Stopping,
                 position_ms: 0,
                 duration_ms: None,
-                repeat: Repeat::Off,
+                repeat,
                 order: Order::Sequential,
                 error: None,
             },
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn pause_stop_restart_and_exit() {
-        let mut player = Controller::new(Fake::default());
+        let mut player = Controller::new(Fake::default(), Repeat::Off);
         replace(&mut player, &["/one"]);
         player.command(Command::ExitOnStopping).unwrap();
         assert!(!player.shutdown);
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn skips_broken_tracks_and_ignores_old_end() {
-        let mut player = Controller::new(Fake::default());
+        let mut player = Controller::new(Fake::default(), Repeat::Off);
         replace(&mut player, &["/one"]);
         let old = player.generation;
         player.command(Command::Pause).unwrap();
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn random_previous_retraces_order_and_repeat_one_only_affects_eof() {
-        let mut player = Controller::new(Fake::default());
+        let mut player = Controller::new(Fake::default(), Repeat::Off);
         player.rng = fastrand::Rng::with_seed(123);
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(&mut player, &["/one", "/two", "/three"]);
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn all_broken_tracks_exhaust_even_with_repeat_all() {
-        let mut player = Controller::new(Fake::default());
+        let mut player = Controller::new(Fake::default(), Repeat::Off);
         player.command(Command::SetRepeat(Repeat::All)).unwrap();
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(

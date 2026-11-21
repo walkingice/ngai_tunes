@@ -60,17 +60,20 @@ See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
 
 ## Configuration
 
-Optional notification durations are configured in
-`~/.config/ngai_tunes/config.json`, in seconds:
+Settings are stored in `~/.config/ngai_tunes/config.json`.
 
 ```json
 {
   "info_seconds": 5,
   "warning_seconds": 5,
-  "error_seconds": 10
+  "error_seconds": 10,
+  "repeat": "Off"
 }
 ```
 
-Omitted values use the defaults shown above. Warnings appear in yellow and
-errors in red. Invalid or unreadable configuration falls back to defaults and
-prints an error on startup.
+Omitted values use the defaults shown above. Notification durations are in
+seconds. Warnings appear in yellow and errors in red. Invalid or unreadable
+configuration falls back to defaults and prints an error on startup.
+
+The daemon saves changes to `repeat` and restores the setting on startup.
+The supported values are `Off`, `All`, and `One`.

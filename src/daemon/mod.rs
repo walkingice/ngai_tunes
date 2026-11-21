@@ -7,6 +7,7 @@ use crate::{
         Command, Failure, Message, QueueSegment, QueueTransfer, Request, Snapshot, Track, VERSION,
         WireMessage, encode, encode_segments, read_frame,
     },
+    storage::config::ConfigStore,
 };
 use controller::Controller;
 use runtime::Runtime;
@@ -116,15 +117,23 @@ impl Peer {
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    serve(Runtime::bind(Path::new(runtime::ROOT))?, Audio::default())?;
+    let config = ConfigStore::user().ok();
+    serve(
+        Runtime::bind(Path::new(runtime::ROOT))?,
+        Audio::default(),
+        config.as_ref(),
+    )?;
     Ok(())
 }
 
-fn serve(runtime: Runtime, engine: impl Engine) -> io::Result<()> {
+fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) -> io::Result<()> {
     let (input, requests) = mpsc::sync_channel(64);
     let mut peers = HashMap::new();
     let mut id = 0;
-    let mut controller = Controller::new(engine);
+    let settings = config
+        .and_then(|store| store.load().ok())
+        .unwrap_or_default();
+    let mut controller = Controller::new(engine, settings.repeat);
     let mut queue = QueueFrames::new(0, &[])?;
     while !controller.shutdown {
         for _ in 0..16 {
@@ -143,7 +152,7 @@ fn serve(runtime: Runtime, engine: impl Engine) -> io::Result<()> {
         let revision = controller.revision();
         match requests.recv_timeout(Duration::from_millis(25)) {
             Ok(Input::Request(id, request)) => {
-                respond(&mut controller, &mut queue, &mut peers, id, request)
+                respond(&mut controller, &mut queue, &mut peers, config, id, request)
             }
             Ok(Input::Closed(id)) => {
                 peers.remove(&id);
@@ -185,13 +194,14 @@ fn respond(
     controller: &mut Controller<impl Engine>,
     queue: &mut QueueFrames,
     peers: &mut HashMap<u64, Peer>,
+    config: Option<&ConfigStore>,
     id: u64,
     request: Request,
 ) {
     let Some(peer) = peers.get_mut(&id) else {
         return;
     };
-    let Some(response) = handle_request(controller, queue, peer, request) else {
+    let Some(response) = handle_request(controller, queue, peer, config, request) else {
         return;
     };
     let has_state = response.state.is_some();
@@ -225,6 +235,7 @@ fn handle_request(
     controller: &mut Controller<impl Engine>,
     queue: &mut QueueFrames,
     peer: &mut Peer,
+    config: Option<&ConfigStore>,
     request: Request,
 ) -> Option<Message> {
     let id = Some(request.request_id);
@@ -255,6 +266,14 @@ fn handle_request(
 
     let subscribe = matches!(request.command, Command::Subscribe);
     let snapshot = subscribe || matches!(request.command, Command::GetState);
+    if let Command::SetRepeat(repeat) = request.command {
+        let Some(config) = config else {
+            return failure("config", "Could not save repeat mode: HOME is not set");
+        };
+        if let Err(error) = config.save_repeat(repeat) {
+            return failure("config", &format!("Could not save repeat mode: {error}"));
+        }
+    }
     match controller.command(request.command) {
         Ok(()) => {
             peer.subscribed |= subscribe;
@@ -460,7 +479,8 @@ mod tests {
         let directory = root.path().join("run");
         let runtime = Runtime::bind(&directory).unwrap();
         let socket = directory.join("daemon.sock");
-        let server = thread::spawn(move || serve(runtime, Silent).unwrap());
+        let config = ConfigStore::new(root.path().join("config.json"));
+        let server = thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap());
         let peer = || test_peer(&socket);
         let mut first = peer();
         let mut second = peer();
@@ -487,12 +507,37 @@ mod tests {
         assert!(!socket.exists());
     }
     #[test]
+    fn repeat_mode_survives_daemon_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("run");
+        let socket = directory.join("daemon.sock");
+        let start = || {
+            let runtime = Runtime::bind(&directory).unwrap();
+            let config = ConfigStore::new(root.path().join("config.json"));
+            thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap())
+        };
+        let server = start();
+        let mut peer = test_peer(&socket);
+        peer.request(1, Command::SetRepeat(Repeat::One));
+        peer.request(2, Command::Quit);
+        server.join().unwrap();
+
+        let server = start();
+        let mut peer = test_peer(&socket);
+        let state = peer.request(1, Command::Subscribe).state.unwrap();
+        assert_eq!(state.repeat, Repeat::One);
+        peer.request(2, Command::Quit);
+        server.join().unwrap();
+    }
+
+    #[test]
     fn large_queue_is_atomic_and_shared_with_new_subscribers() {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("run");
         let runtime = Runtime::bind(&directory).unwrap();
         let socket = directory.join("daemon.sock");
-        let server = thread::spawn(move || serve(runtime, Silent).unwrap());
+        let config = ConfigStore::new(root.path().join("config.json"));
+        let server = thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap());
         let mut observer = test_peer(&socket);
         observer.request(1, Command::Subscribe);
         let mut uploader = test_peer(&socket);
