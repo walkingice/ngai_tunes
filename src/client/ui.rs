@@ -398,18 +398,6 @@ impl App {
             KeyCode::Char('l') => KeyCode::Right,
             key => key,
         };
-        match (key, self.focus) {
-            (KeyCode::Up | KeyCode::Down, Focus::Filter(index)) => {
-                let filter = &mut self.library.filters[index];
-                filter.cursor = move_cursor(filter.cursor, filter.values.len() + 1, key);
-                return false;
-            }
-            (KeyCode::Enter, Focus::Filter(index)) => {
-                self.library.apply(index);
-                return false;
-            }
-            _ => {}
-        }
         match key {
             KeyCode::Esc => {
                 self.finish(Command::ExitOnStopping);
@@ -432,23 +420,48 @@ impl App {
                     Focus::Sidebar | Focus::Playback => Focus::Main,
                 }
             }
-            KeyCode::Up if self.focus == Focus::Sidebar => {
-                self.page = self.page.step(self.tabs(), self.tabs().len() - 1)
+            KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
+            _ => match self.focus {
+                Focus::Sidebar => self.sidebar_key(key),
+                Focus::Filter(index) => self.filter_key(index, key),
+                Focus::Main => self.main_key(key),
+                Focus::Playback => self.playback_key(key),
+            },
+        }
+        false
+    }
+
+    fn sidebar_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up => self.page = self.page.step(self.tabs(), self.tabs().len() - 1),
+            KeyCode::Down => self.page = self.page.step(self.tabs(), 1),
+            KeyCode::Enter => self.focus = self.page.main_focus(),
+            _ => {}
+        }
+    }
+
+    fn filter_key(&mut self, index: usize, key: KeyCode) {
+        match key {
+            KeyCode::Up | KeyCode::Down => {
+                let filter = &mut self.library.filters[index];
+                filter.cursor = move_cursor(filter.cursor, filter.values.len() + 1, key);
             }
-            KeyCode::Down if self.focus == Focus::Sidebar => {
-                self.page = self.page.step(self.tabs(), 1)
-            }
-            KeyCode::Up if self.focus == Focus::Main && self.page == Page::Scan => {
+            KeyCode::Enter => self.library.apply(index),
+            _ => {}
+        }
+    }
+
+    fn main_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Up if self.page == Page::Scan => {
                 self.scan_cursor = self.scan_cursor.saturating_sub(1);
             }
-            KeyCode::Down if self.focus == Focus::Main && self.page == Page::Scan => {
+            KeyCode::Down if self.page == Page::Scan => {
                 self.scan_cursor =
                     (self.scan_cursor + 1).min(self.notice_config.scan_directories.len() * 2 + 1);
             }
-            KeyCode::Enter if self.focus == Focus::Main && self.page == Page::Scan => {
-                self.scan_activate()
-            }
-            KeyCode::Up | KeyCode::Down if self.focus == Focus::Main => {
+            KeyCode::Enter if self.page == Page::Scan => self.scan_activate(),
+            KeyCode::Up | KeyCode::Down => {
                 let (songs, cursor) = self.songs();
                 let cursor = move_cursor(cursor, songs.len(), key);
                 match self.page {
@@ -457,16 +470,15 @@ impl App {
                     _ => self.cursor = cursor,
                 }
             }
-            KeyCode::Enter if self.focus == Focus::Main => self.play_selection(),
-            KeyCode::Enter if self.focus == Focus::Sidebar => self.focus = self.page.main_focus(),
-            KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
-            _ => {
-                if let Some(command) = self.playback_command(key) {
-                    self.send(command);
-                }
-            }
+            KeyCode::Enter => self.play_selection(),
+            _ => self.playback_key(key),
         }
-        false
+    }
+
+    fn playback_key(&mut self, key: KeyCode) {
+        if let Some(command) = self.playback_command(key) {
+            self.send(command);
+        }
     }
 
     fn playback_command(&self, key: KeyCode) -> Option<Command> {
@@ -1174,12 +1186,14 @@ mod tests {
             index: None,
             text: String::new(),
         });
-        for key in "hjkl".chars() {
-            app.key(KeyCode::Char(key));
+        for key in "hjklq".chars() {
+            assert!(!app.key(KeyCode::Char(key)));
         }
+        assert!(!app.key(KeyCode::Tab));
+        assert!(app.focus == Focus::Sidebar);
         assert!(matches!(
             app.scan_dialog,
-            Some(ScanDialog::Edit { ref text, .. }) if text == "hjkl"
+            Some(ScanDialog::Edit { ref text, .. }) if text == "hjklq"
         ));
     }
 
