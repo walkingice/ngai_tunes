@@ -65,24 +65,42 @@ impl Progress {
     }
 }
 
-fn run(database: Database, roots: Vec<String>, state: &Progress) -> io::Result<ScanWriter> {
-    let mut writer = database.stage()?;
-    let mut visited = HashSet::new();
+fn scan_roots(roots: Vec<String>, state: &Progress) -> io::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut unique = HashSet::new();
     for root in roots {
         state.check()?;
         let root = PathBuf::from(root);
-        let mut pending = vec![root.canonicalize().map_err(|error| at(&root, error))?];
+        let path = root.canonicalize().map_err(|error| at(&root, error))?;
+        if unique.insert(path.clone()) {
+            paths.push(path);
+        }
+    }
+    paths.retain(|path| {
+        !path
+            .ancestors()
+            .skip(1)
+            .any(|parent| unique.contains(parent))
+    });
+    Ok(paths)
+}
+
+fn run(database: Database, roots: Vec<String>, state: &Progress) -> io::Result<ScanWriter> {
+    let roots = scan_roots(roots, state)?;
+    let mut writer = database.stage()?;
+    let mut scanned_files = HashSet::new();
+    for root in roots {
+        let mut pending = vec![root];
         while let Some(directory) = pending.pop() {
             state.check()?;
-            if !visited.insert(directory.clone()) {
-                continue;
-            }
             *state.directory.lock().unwrap() = Some(directory.clone());
             let (files, children) = directory_entries(&directory, || state.check())
                 .map_err(|error| at(&directory, error))?;
             for path in files {
                 state.check()?;
-                writer.write(&read_scan_track(path))?;
+                if scanned_files.insert(path.clone()) {
+                    writer.write(&read_scan_track(path))?;
+                }
             }
             pending.extend(children.into_iter().rev());
         }
@@ -105,6 +123,29 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn keeps_only_outermost_unique_scan_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let music = root.path().join("music");
+        let child = music.join("child");
+        let sibling = root.path().join("music-live");
+        let alias = root.path().join("alias");
+        fs::create_dir_all(&child).unwrap();
+        fs::create_dir(&sibling).unwrap();
+        std::os::unix::fs::symlink(&music, &alias).unwrap();
+
+        let roots = [&child, &alias, &music, &music, &sibling]
+            .map(|path| path.to_str().unwrap().to_owned())
+            .to_vec();
+        assert_eq!(
+            scan_roots(roots, &Progress::default()).unwrap(),
+            [
+                music.canonicalize().unwrap(),
+                sibling.canonicalize().unwrap()
+            ]
+        );
+    }
+
+    #[test]
     fn scans_nested_tracks_and_keeps_multiple_values() {
         let root = tempfile::tempdir().unwrap();
         let music = root.path().join("music");
@@ -120,7 +161,9 @@ mod tests {
         tag.save_to_path(&song, WriteOptions::default()).unwrap();
 
         let path = root.path().join("database.jsonl");
-        let roots = vec![music.display().to_string(), child.display().to_string()];
+        let roots = [&child, &music, &child, &music]
+            .map(|path| path.to_str().unwrap().to_owned())
+            .to_vec();
         let progress = Progress::default();
         run(Database::new(path.clone()), roots, &progress)
             .unwrap()
