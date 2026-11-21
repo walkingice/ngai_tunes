@@ -2,7 +2,7 @@ use crate::{
     playback::{Engine, Event, StartError, millis},
     protocol::{Command, Order, Repeat, Snapshot, Status},
 };
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 pub struct Controller<E> {
     engine: E,
@@ -141,18 +141,8 @@ impl<E: Engine> Controller<E> {
                 break;
             }
             attempted[index] = true;
-            self.state.current = Some(index);
-            self.state.position_ms = 0;
-            self.state.duration_ms = None;
-            self.generation += 1;
-            let path: &Path = &self.state.queue[index].path;
-            match self.engine.start(path, self.generation) {
-                Ok(duration) => {
-                    self.state.duration_ms = duration.map(millis);
-                    self.state.status = Status::Playing;
-                    self.state.error = None;
-                    return;
-                }
+            match self.start_candidate(index) {
+                Ok(()) => return,
                 Err(StartError::Device(error)) => {
                     self.set_error(error);
                     return;
@@ -165,6 +155,20 @@ impl<E: Engine> Controller<E> {
             }
         }
         self.shutdown = true;
+    }
+
+    fn start_candidate(&mut self, index: usize) -> Result<(), StartError> {
+        self.state.current = Some(index);
+        self.state.position_ms = 0;
+        self.state.duration_ms = None;
+        self.generation += 1;
+        let duration = self
+            .engine
+            .start(&self.state.queue[index].path, self.generation)?;
+        self.state.duration_ms = duration.map(millis);
+        self.state.status = Status::Playing;
+        self.state.error = None;
+        Ok(())
     }
 
     fn set_error(&mut self, mut error: String) {
@@ -251,6 +255,7 @@ impl Traversal {
 mod tests {
     use super::*;
     use crate::protocol::Track;
+    use std::path::Path;
 
     #[derive(Default)]
     struct Fake {
@@ -263,6 +268,9 @@ mod tests {
             self.position = Duration::ZERO;
             if path.ends_with("broken") {
                 return Err(StartError::Track("Broken".into()));
+            }
+            if path.ends_with("device-error") {
+                return Err(StartError::Device("Unavailable".into()));
             }
             Ok(Some(Duration::from_secs(10)))
         }
@@ -326,7 +334,8 @@ mod tests {
         player.command(Command::Pause).unwrap();
         replace(&mut player, &["/broken", "/two"]);
         assert_eq!(player.snapshot().current, Some(1));
-        player.engine.event = Some(Event::End(old));
+        assert_eq!(player.generation, old + 2);
+        player.engine.event = Some(Event::End(old + 1));
         player.tick();
         assert!(!player.shutdown);
         player.engine.event = Some(Event::End(player.generation));
@@ -359,6 +368,18 @@ mod tests {
         player.engine.event = Some(Event::End(player.generation));
         player.tick();
         assert!(player.shutdown);
+    }
+
+    #[test]
+    fn device_failure_ends_search_without_shutdown() {
+        let mut player = Controller::new(Fake::default(), Repeat::All);
+        replace(&mut player, &["/device-error", "/two"]);
+        let snapshot = player.snapshot();
+        assert_eq!(snapshot.status, Status::Stopping);
+        assert_eq!(snapshot.current, Some(0));
+        assert_eq!(snapshot.error.as_deref(), Some("Unavailable"));
+        assert_eq!(player.generation, 1);
+        assert!(!player.shutdown);
     }
 
     #[test]

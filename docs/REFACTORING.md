@@ -81,21 +81,3 @@ Leave socket reconnection in `poll_connection`.
 state. An unrelated snapshot during a pending upload leaves the displayed
 replacement alone. A failed upload resynchronizes against the available
 snapshot, and repeated snapshots with the same error do not renew the notice.
-
-## 5. Isolate starting one playback candidate
-
-In [Controller::try_tracks](../src/daemon/controller.rs), the same loop
-updates the snapshot for a single candidate and decides how far to search
-when tracks fail. The playback order is already encapsulated. The remaining
-boundary is between attempting one track and choosing another.
-
-Extract a private method taking a queue index and returning
-`Result<(), StartError>`. Move the current index, position and duration
-reset, generation increment, engine start and successful Playing transition
-into it. Leave the initial stop, attempted-index tracking, error reporting
-and shutdown decision in the outer method.
-
-**Check** each attempt gets a fresh generation so an old end event cannot
-advance the new track. A track error permits another candidate. A device
-error ends the search with the daemon alive. An entirely broken queue
-terminates even under repeat-all, without trying an index twice.
