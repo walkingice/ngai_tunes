@@ -5,7 +5,7 @@ use super::{
     library::{self, Facet, Library},
     recursive_scan::Scan,
 };
-use crate::protocol::{Command, Message, Order, Repeat, Snapshot, Status, Track};
+use crate::protocol::{Command, Failure, Message, Order, Repeat, Snapshot, Status, Track};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::style::Color;
 use std::{
@@ -239,20 +239,29 @@ impl App {
     }
 
     fn receive(&mut self, message: Message) {
-        if message.request_id == self.pending && self.pending.is_some() {
+        self.handle_reply(message.request_id, message.error);
+        if let Some(state) = message.state {
+            self.apply_snapshot(state);
+        }
+    }
+
+    fn handle_reply(&mut self, request_id: Option<u64>, error: Option<Failure>) {
+        if request_id == self.pending && self.pending.is_some() {
             self.pending = None;
         }
-        let play_response = self.pending_play.is_some() && message.request_id == self.pending_play;
+        let play_response = self.pending_play.is_some() && request_id == self.pending_play;
         if play_response {
             self.pending_play = None;
         }
-        if let Some(error) = message.error {
+        if let Some(error) = error {
             if play_response {
                 self.sync_queue();
             }
             self.show_notice(Level::Error, error.message);
         }
-        let Some(state) = message.state else { return };
+    }
+
+    fn apply_snapshot(&mut self, state: Snapshot) {
         if self
             .snapshot
             .as_ref()
@@ -1019,6 +1028,61 @@ mod tests {
             state: Some(state),
         });
         assert!(app.info.is_none());
+    }
+
+    #[test]
+    fn play_failure_restores_latest_queue_even_with_stale_snapshot() {
+        let track = |title: &str| Track {
+            path: format!("/{title}.flac").into(),
+            title: title.into(),
+            artist: None,
+            album: None,
+            track_number: None,
+            duration_ms: None,
+            genre: None,
+        };
+        let mut app = App::new(None, Vec::new(), None);
+        app.tracks = vec![track("Replacement")];
+        app.pending = Some(2);
+        app.pending_play = Some(1);
+        let state = Snapshot {
+            revision: 2,
+            queue: Arc::new(vec![track("Daemon queue")]),
+            current: Some(0),
+            status: Status::Playing,
+            position_ms: 0,
+            duration_ms: None,
+            repeat: Repeat::Off,
+            order: Order::Sequential,
+            error: None,
+        };
+        app.receive(Message {
+            request_id: None,
+            error: None,
+            state: Some(state.clone()),
+        });
+        assert_eq!(app.tracks[0].title, "Replacement");
+        app.receive(Message {
+            request_id: Some(1),
+            error: Some(Failure {
+                code: "invalid_command".into(),
+                message: "Upload failed".into(),
+            }),
+            state: Some(Snapshot {
+                revision: 1,
+                ..state
+            }),
+        });
+        assert_eq!(app.pending_play, None);
+        assert_eq!(app.pending, Some(2));
+        assert_eq!(app.snapshot.as_ref().unwrap().revision, 2);
+        assert_eq!(app.tracks[0].title, "Daemon queue");
+        app.receive(Message {
+            request_id: Some(2),
+            error: None,
+            state: None,
+        });
+        assert_eq!(app.pending, None);
     }
 
     #[test]

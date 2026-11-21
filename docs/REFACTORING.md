@@ -62,22 +62,3 @@ for the notice. Keep displaying defaults after a load failure.
 opening Scanned. Saving targets and starting a scan must stay blocked in
 that case. A successful load still saves through `save_if_unchanged`;
 a failed save must keep both the old settings and the edit dialog.
-
-## 4. Separate playback replies from snapshot updates
-
-In [App::receive](../src/client/ui.rs), one message can acknowledge a
-request, report a failure and carry a snapshot. The ordering matters.
-For example, an old snapshot can arrive with a valid acknowledgement.
-Also, a later command can replace `pending` while `pending_play` still
-identifies the queue replacement awaiting a reply.
-
-First extract request acknowledgement and error handling, keeping the
-two request IDs distinct. Then extract snapshot application, including
-the revision check, initial cursor choice, repeated-error suppression
-and queue synchronization. Keep `receive` as the short ordered call site.
-Leave socket reconnection in `poll_connection`.
-
-**Check** a matching reply clears its request even with stale or absent
-state. An unrelated snapshot during a pending upload leaves the displayed
-replacement alone. A failed upload resynchronizes against the available
-snapshot, and repeated snapshots with the same error do not renew the notice.
