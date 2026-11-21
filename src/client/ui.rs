@@ -627,7 +627,7 @@ mod tests {
         let tracks = (0..20)
             .map(|number| Track {
                 path: format!("/{number}").into(),
-                title: format!("Track {number}"),
+                title: format!("Track {number} 音樂"),
                 artist: None,
                 album: None,
                 track_number: Some(number),
@@ -637,12 +637,14 @@ mod tests {
             .collect();
         let mut app = App::new(None, tracks, None);
         let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
-        for (cursor, focus, expected) in [
-            (0, Focus::Main, Color::Cyan),
-            (15, Focus::Main, Color::Cyan),
-            (4, Focus::Main, Color::Cyan),
-            (4, Focus::Playback, Color::DarkGray),
-            (4, Focus::Main, Color::Cyan),
+        for (cursor, focus, fg, bg) in [
+            (0, Focus::Main, Color::Black, Color::Cyan),
+            (1, Focus::Main, Color::Black, Color::Cyan),
+            (0, Focus::Main, Color::Black, Color::Cyan),
+            (15, Focus::Main, Color::Black, Color::Cyan),
+            (4, Focus::Main, Color::Black, Color::Cyan),
+            (4, Focus::Playback, Color::White, Color::DarkGray),
+            (4, Focus::Main, Color::Black, Color::Cyan),
         ] {
             app.cursor = cursor;
             app.focus = focus;
@@ -657,7 +659,21 @@ mod tests {
                     line.contains(&title)
                 })
                 .expect("selected track should be visible");
-            assert_eq!(buffer[(16, selected_row)].bg, expected);
+            for x in 14..99 {
+                if x > 14 && matches!(buffer[(x - 1, selected_row)].symbol(), "音" | "樂") {
+                    continue;
+                }
+                assert_eq!(
+                    (buffer[(x, selected_row)].fg, buffer[(x, selected_row)].bg),
+                    (fg, bg)
+                );
+            }
+            for y in 2..5 {
+                if y != selected_row {
+                    assert_ne!(buffer[(16, y)].bg, Color::Cyan);
+                    assert_ne!(buffer[(16, y)].bg, Color::DarkGray);
+                }
+            }
         }
     }
 
