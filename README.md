@@ -26,7 +26,7 @@ cargo build --release
 
 If no daemon is running, launching without arguments or with `--attach` opens
 an empty Playing queue and shows a message at the bottom.
-To start a session, pass a directory. In the Directory tab, select a track
+To start a session, pass a directory. In the Browsing tab, select a track
 with the arrow keys and press Enter to load the list into Playing and start
 playback. Playing shows the daemon queue and starts empty without a daemon.
 Space pauses or resumes. Esc detaches and asks a manually stopped daemon to exit.

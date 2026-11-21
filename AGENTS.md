@@ -14,7 +14,7 @@ This file defines the user-visible contract for the first release. The
 - Ship one Rust binary for Linux and macOS. Client mode is the default.
 - With a directory argument, scan that directory. Use `ngai-tunes .` to
   scan the current working directory. List MP3 and FLAC files directly inside it
-  in the Directory tab. Read tags and fall back to the filename for the title.
+  in the Browsing tab. Read tags and fall back to the filename for the title.
 - Opening the scan TUI checks for an existing daemon so the Playback panel can
   show the live session. Playing shows the daemon queue and starts empty if
   no daemon is running.

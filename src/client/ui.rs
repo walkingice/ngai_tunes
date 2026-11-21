@@ -61,15 +61,15 @@ enum Page {
     Playing,
     Scanned,
     Scan,
-    Directory,
+    Browsing,
 }
 
 impl Page {
     const TABS: [(Self, &str); 4] = [
         (Self::Playing, "Playing"),
         (Self::Scanned, "Scanned"),
+        (Self::Browsing, "Browsing"),
         (Self::Scan, "Settings"),
-        (Self::Directory, "Directory"),
     ];
 
     fn step(self, tabs: &[(Self, &str)], offset: usize) -> Self {
@@ -157,7 +157,7 @@ impl App {
         });
         let mut app = Self {
             page: if source.is_some() {
-                Page::Directory
+                Page::Browsing
             } else {
                 Page::Playing
             },
@@ -453,7 +453,7 @@ impl App {
                 let cursor = move_cursor(cursor, songs.len(), key);
                 match self.page {
                     Page::Scanned => self.library.cursor = cursor,
-                    Page::Directory => self.directory_cursor = cursor,
+                    Page::Browsing => self.directory_cursor = cursor,
                     _ => self.cursor = cursor,
                 }
             }
@@ -553,7 +553,7 @@ impl App {
             sidebar,
         );
         match self.page {
-            Page::Playing | Page::Directory => self.render_list(frame, main),
+            Page::Playing | Page::Browsing => self.render_list(frame, main),
             Page::Scanned => self.render_library(frame, main),
             Page::Scan => self.render_scan(frame, main),
         }
@@ -853,14 +853,14 @@ impl App {
         if self.source.is_some() {
             &Page::TABS
         } else {
-            &Page::TABS[..Page::TABS.len() - 1]
+            &[Page::TABS[0], Page::TABS[1], Page::TABS[3]]
         }
     }
 
     fn songs(&self) -> (&[Track], usize) {
         match self.page {
             Page::Scanned => (&self.library.songs, self.library.cursor),
-            Page::Directory => (&self.directory_tracks, self.directory_cursor),
+            Page::Browsing => (&self.directory_tracks, self.directory_cursor),
             _ => (&self.tracks, self.cursor),
         }
     }
@@ -927,10 +927,10 @@ impl App {
         });
         let name = match self.page {
             Page::Scanned => "Songs".into(),
-            Page::Directory => self
+            Page::Browsing => self
                 .source
                 .as_ref()
-                .map_or_else(|| "Directory".into(), |source| source.display().to_string()),
+                .map_or_else(|| "Browsing".into(), |source| source.display().to_string()),
             _ => "Queue".into(),
         };
         let mut state = TableState::default().with_selected((!tracks.is_empty()).then_some(cursor));
@@ -1363,6 +1363,13 @@ mod tests {
     fn attach_without_daemon_opens_an_empty_queue_with_a_message() {
         let mut app = App::new(None, Vec::new(), None);
         app.initialize();
+        assert_eq!(
+            app.tabs()
+                .iter()
+                .map(|&(_, label)| label)
+                .collect::<Vec<_>>(),
+            ["Playing", "Scanned", "Settings"]
+        );
         assert!(!app.key(KeyCode::Enter));
         assert!(app.tracks.is_empty());
         assert!(app.connection.is_none());
@@ -1384,7 +1391,14 @@ mod tests {
             genre: None,
         };
         let mut app = App::new(Some(".".into()), vec![track("Local")], None);
-        assert!(app.page == Page::Directory);
+        assert!(app.page == Page::Browsing);
+        assert_eq!(
+            app.tabs()
+                .iter()
+                .map(|&(_, label)| label)
+                .collect::<Vec<_>>(),
+            ["Playing", "Scanned", "Browsing", "Settings"]
+        );
         assert_eq!(app.songs().0[0].title, "Local");
         app.page = Page::Playing;
         assert!(app.songs().0.is_empty());
@@ -1405,7 +1419,7 @@ mod tests {
         });
         assert_eq!(app.songs().0[1].title, "Current");
         assert_eq!(app.songs().1, 1);
-        app.page = Page::Directory;
+        app.page = Page::Browsing;
         assert_eq!(app.songs().0[0].title, "Local");
         assert_eq!(app.songs().1, 0);
     }
