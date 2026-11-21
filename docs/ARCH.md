@@ -1,137 +1,80 @@
 # Architecture
 
-[AGENTS.md](../AGENTS.md) defines the product behavior. Keep these boundaries
-when choosing crates or changing the thread model.
+The binary runs as a terminal client or as a playback daemon. Multiple clients
+can share the daemon. Each client owns its terminal, displayed lists, filters
+and cursors. The daemon owns the live queue, playback modes and audio device.
+See the [user-visible contract](../AGENTS.md) and [UI conventions](STYLE.md).
 
-## Processes and ownership
+## From launch to playback
 
-Define the CLI once with Rust’s `clap::Parser` derive API. Declare the
-optional directory as `Option<PathBuf>` and mode flags as mutually exclusive
-with each other and the directory. Let clap generate help, usage and parse
-errors and handle the `--` end-of-options marker.
+1. [main.rs](../src/main.rs) uses clap to dispatch a directory, the default
+   attach mode, or the foreground daemon. The private `--detached-child`
+   flag runs the same daemon entry point.
+2. [client/mod.rs](../src/client/mod.rs) reads direct children of a directory
+   argument before opening the terminal. Both client modes try to connect to
+   the existing daemon. A successful connection subscribes immediately.
+3. In [ui.rs](../src/client/ui.rs), `App::songs` chooses among the directory
+   list, filtered library and local copy of the Playing queue. Enter on a
+   song sends the whole displayed list and its selected index. An empty
+   list returns before any connection attempt.
+4. [ipc.rs](../src/client/ipc.rs) opens a fresh connection for this upload.
+   If connection fails, it launches the same executable with null standard
+   streams and a new session via `setsid`. The client retries the socket
+   for up to two seconds. A reader thread assembles daemon messages and
+   passes them to the UI through a bounded channel.
+5. [runtime.rs](../src/daemon/runtime.rs) checks the runtime directory and
+   takes an exclusive nonblocking file lock before binding the Unix socket
+   under `/tmp/ngai_tunes`. The lock holder cleans up the socket on exit.
+   A client disconnect releases its connection while playback continues.
 
-Dispatch an empty argument list and the `--attach` flag to the same
-attach client. A directory argument selects the scan client, with `.`
-resolved against the client’s working directory.
-Support a foreground `--daemon` flag for debugging and a private detached child
-mode for the launcher. Keep CLI parsing separate from IPC types.
+## Queue transfer and command ordering
 
-| Module | Owns |
-| --- | --- |
-| client | Directory scan, metadata, displayed list, cursor, focus, cached session snapshot and terminal restoration |
-| daemon | Singleton, listener, client connections, ordered commands, queue, playback order and shutdown |
-| playback | One active audio stream, decoder, actual position and playback completion/error events |
-| protocol | Serializable requests, responses, events and snapshots independent of TUI and audio crates |
+[protocol.rs](../src/protocol.rs) defines version 2 JSON Lines requests,
+responses and state snapshots. Requests carry a request ID. Replies echo the
+ID, while subscription updates arrive unsolicited. The frame limit is 1 MiB.
 
-The scan client resolves paths before sending them, since the daemon may
-have started in another directory. Keep list order deterministic. An attach
-client mirrors queue updates. A scan client updates its Playback panel
-without overwriting its local list. On disconnect retain the last list,
-clear live playback indicators and allow Main Enter to reconnect.
+- The client translates the local `ReplaceAndPlay` command into ordered
+  `UploadQueue` segments carrying one request ID. The first segment carries
+  the selected index in the full queue. The segment encoder packs up to 100
+  tracks per frame and reduces the count to fit the byte limit.
+- The [daemon loop](../src/daemon/mod.rs) accepts peers and serializes their
+  requests with controller ticks. Each peer has a reader, a writer, a bounded
+  output channel and its own upload assembly state. The controller receives
+  the replacement only after the complete queue has arrived.
+- Queue revision and state revision serve different purposes. The daemon
+  caches encoded queue frames and sends them before a snapshot when the
+  recipient needs that queue revision. Position, status or mode updates can
+  then reference the same queue. A new connection gets its own assembly state.
 
-## Startup and shutdown
+## Playback
 
-1. Try the socket. On Main Enter with no connection, spawn the same binary
-   without a shell. Detach the child from the terminal with setsid and
-   redirect standard streams. Report readiness or startup failure through
-   a bounded handshake.
-2. Use a private runtime directory (0700). Verify ownership and reject
-   symlinks or unsafe existing paths. Hold an exclusive nonblocking flock
-   on daemon.lock for the daemon lifetime. Only the lock holder may remove
-   a stale socket and bind the new one.
-3. A competing launcher waits a bounded time for the winner to accept
-   connections. Report timeout to the client. Socket connection failure
-   alone never grants permission to unlink an endpoint.
-4. Serialize shutdown with controller commands. Stop accepting clients,
-   close streams and unlink the socket before releasing the lock. Leave the
-   lock file in place so concurrent processes lock the same inode.
-5. Explicit quit is one controller operation. Client EOF releases only the
-   connection. Evaluate exit_on_stopping when received, irrespective of the
-   number of attached clients. Natural queue exhaustion exits independently.
+The [controller](../src/daemon/controller.rs) applies transport commands,
+chooses the next index, handles exhaustion and reports snapshots. Track
+failures trigger bounded attempts to find a playable entry. A device failure
+leaves a stopped selection available for retry. Generation numbers associate
+end events with the playback attempt that produced them.
 
-## IPC and controller
+[playback.rs](../src/playback.rs) defines the `Engine` interface used by the
+controller and its test doubles. The production `Audio` implementation uses
+Rodio's decoder, output stream and sink. It checks for a first sample before
+starting a track, reads position from the sink and reports device errors
+through a channel. The client estimates elapsed time between snapshots.
 
-Use newline-delimited UTF-8 JSON. Each request has a version, request_id
-and command. Reply with the same ID and success or an error code/message.
-Handle partial lines, multiple lines per read, unsupported versions and
-malformed input. Enforce the 1 MiB frame limit on both ends.
+## Library and persistence
 
-- Main Enter uploads the ordered paths and metadata in numbered segments
-  with the same request ID. Each segment includes the total segment count
-  and its one-based index. Pack up to 100 tracks per segment and shrink
-  segments as needed to fit the frame limit. Only the first segment
-  includes the selected index in the full queue.
-- Stage uploads per connection. Acknowledge a successful replacement after
-  all segments arrive and the full queue is validated. Invalid or interrupted
-  uploads leave the active queue in place.
-- Provide subscribe/get-state, pause/resume, stop, restart, seek,
-  next/previous, set-repeat, set-order, quit and exit_on_stopping.
-- Subscribe before obtaining a snapshot. Send the queue in numbered
-  segments when a connection first sees its queue revision. Send the snapshot
-  after those segments with the queue revision, a monotonic state revision,
-  current entry, status, duration if known, confirmed position and playback
-  modes. The client assembles the complete queue before applying the snapshot.
-  Later state changes reuse the cached queue for that revision. Reset both
-  revision baselines on reconnect.
-- Animate progress locally between updates while Playing. Resync on seek,
-  pause and track change. Use bounded per-client output queues so a slow
-  reader cannot stall playback. On connection loss after sending a command,
-  refresh state before letting the user retry.
-
-## Audio
-
-Keep queue policy in one daemon controller. Behind a shared Rust backend
-interface, open MP3/FLAC, play, pause, resume, stop, seek and report position.
-Evaluate Rodio with Symphonia decoding on both systems before committing to
-platform-specific code. Read metadata in the client and keep filesystem and
-socket operations outside the audio callback.
-
-Distinguish natural EOF, replacement, manual stop, track failure and device
-failure. Tag each playback attempt with a generation so late EOF cannot
-advance a replacement track. Clamp seek and publish the confirmed result.
-Bound failed track attempts across the queue even under repeat/random.
-Report device failure separately and retain the selection for retry.
-
-## TUI
-
-The diagram shows the arrangement of the panels. Their dimensions can
-vary with the terminal size.
-
-```text
-+--------+--------------------------------------+
-|        |                                      |
-|        |                                      |
-|        |                                      |
-|        |                                      |
-|  Side  |              Main                    |
-|  Bar   |                                      |
-|        |                                      |
-|        |                                      |
-|        |                                      |
-|        |                                      |
-|        |                                      |
-|        |                                      |
-+--------+--------------------------------------+
-|                                               |
-|                    Playback                   |
-|                                               |
-+-----------------------------------------------+
-|                      Info                     |
-+-----------------------------------------------+
-|                     Hotkey                    |
-+-----------------------------------------------+
-```
-
-| Region | What it shows | Interaction |
-| --- | --- | --- |
-| Sidebar | Available tabs and the active tab. A directory argument opens Browsing. | Selecting a tab chooses the view in Main. |
-| Main | Browsing shows the local track list. Playing shows the daemon queue. Mark the cursor and the playing track independently whenever both are visible. | Up/Down moves the cursor locally. Enter updates Playing with the displayed list before sending it to the daemon to play from the selected entry. Space controls the live session even if the cursor is on another track. |
-| Playback | The daemon's current track, status, elapsed time, a progress bar when duration is known, repeat mode and playback order. Clear live indicators on disconnect. | Space pauses or resumes. Enter stops or restarts the retained track. `n` selects next, `N` or `p` selects previous, and R cycles repeat. Seek and order controls also belong here. |
-| Info | Status messages and errors from scanning, connecting or playing audio. | Display only. |
-| Hotkey | Keys available in the current focus or modal, with their actions. For example, Enter means play selection in Main and stop in Playback while playing. | Display only. |
-
-Tab switches focus between Main and Playback. Uppercase `T` focuses the
-Sidebar, where Tab returns focus to Main. In Scanned, Tab cycles focus from
-the song list through the filters and Playback.
-Route Esc and q according to the [SPEC](../AGENTS.md). Restore terminal
-modes on exit and error.
+- [scan.rs](../src/client/scan.rs) handles directory entries and tag reading.
+  The positional directory feeds Browsing. A separate
+  [recursive worker](../src/client/recursive_scan.rs) expands configured
+  roots, checks for cancellation while walking, tracks its current directory
+  and deduplicates file paths.
+- [database.rs](../src/storage/database.rs) stores one `ScanTrack` per line
+  of `database.jsonl`, preserving multi-value artists and genres. A scan
+  writes a temporary file beside the database. Publishing replaces the
+  database atomically. Dropping an unfinished writer discards its results.
+- [library.rs](../src/client/library.rs) loads the database on a background
+  thread and builds the Genres, Artists and Albums filters and song list.
+  The UI polls for scan and library results alongside socket and key events.
+- [config.rs](../src/storage/config.rs) stores scan roots, notice durations
+  and repeat mode in `~/.config/ngai_tunes/config.json`, beside the database.
+  Writers take a file lock and replace the config by rename. Client saves
+  check for competing edits and preserve the daemon's latest repeat setting.
