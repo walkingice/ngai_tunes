@@ -29,8 +29,13 @@ type Frame = Arc<[u8]>;
 struct Output {
     frame: Frame,
     queue: Arc<[Frame]>,
-    close: bool,
-    delivered: Option<mpsc::Sender<()>>,
+    after_write: AfterWrite,
+}
+
+enum AfterWrite {
+    Continue,
+    Close,
+    CloseAndNotify(mpsc::Sender<()>),
 }
 
 impl Output {
@@ -38,8 +43,7 @@ impl Output {
         Self {
             frame,
             queue: Arc::default(),
-            close: false,
-            delivered: None,
+            after_write: AfterWrite::Continue,
         }
     }
 }
@@ -209,14 +213,17 @@ fn respond(
         queue_revision: has_state.then_some(queue.revision),
         message: response,
     };
-    let (delivered, wait) = mpsc::channel();
-    let closing = controller.shutdown;
+    let (after_write, wait) = if controller.shutdown {
+        let (delivered, wait) = mpsc::channel();
+        (AfterWrite::CloseAndNotify(delivered), Some(wait))
+    } else {
+        (AfterWrite::Continue, None)
+    };
     let sent = encode(&response).is_ok_and(|frame| {
         let output = Output {
             frame: frame.into(),
             queue: Arc::default(),
-            close: closing,
-            delivered: closing.then_some(delivered),
+            after_write,
         };
         if has_state {
             queue.output(peer, output).is_ok()
@@ -226,7 +233,7 @@ fn respond(
     });
     if !sent {
         peers.remove(&id);
-    } else if closing {
+    } else if let Some(wait) = wait {
         peer.graceful = wait.recv_timeout(Duration::from_millis(100)).is_ok();
     }
 }
@@ -324,15 +331,16 @@ fn connect_peer(id: u64, stream: UnixStream, input: SyncSender<Input>) -> io::Re
                 let _ = writer.shutdown(std::net::Shutdown::Both);
                 break;
             }
-            if output.close {
-                let _ = writer.shutdown(std::net::Shutdown::Write);
-            }
-            if let Some(delivered) = output.delivered {
+            let notify = match output.after_write {
+                AfterWrite::Continue => continue,
+                AfterWrite::Close => None,
+                AfterWrite::CloseAndNotify(delivered) => Some(delivered),
+            };
+            let _ = writer.shutdown(std::net::Shutdown::Write);
+            if let Some(delivered) = notify {
                 let _ = delivered.send(());
             }
-            if output.close {
-                break;
-            }
+            break;
         }
         let _ = writer_input.send(Input::Closed(id));
     });
@@ -380,8 +388,11 @@ fn read_requests(
             .try_send(Output {
                 frame: frame.into(),
                 queue: Arc::default(),
-                close,
-                delivered: None,
+                after_write: if close {
+                    AfterWrite::Close
+                } else {
+                    AfterWrite::Continue
+                },
             })
             .is_err()
         {
@@ -492,6 +503,47 @@ mod tests {
             duration_ms: None,
             genre: None,
         }
+    }
+
+    #[test]
+    fn failed_final_write_does_not_notify_delivery() {
+        let (stream, _client) = UnixStream::pair().unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let (input, _requests) = mpsc::sync_channel(8);
+        let peer = connect_peer(1, stream, input).unwrap();
+        let (delivered, wait) = mpsc::channel();
+        let mut output = Output::normal(Frame::from(&b"reply"[..]));
+        output.after_write = AfterWrite::CloseAndNotify(delivered);
+        assert!(peer.output.try_send(output).is_ok());
+        assert_eq!(
+            wait.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn malformed_json_allows_another_request_but_oversized_frame_closes() {
+        let (stream, client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let (input, _requests) = mpsc::sync_channel(8);
+        let _peer = connect_peer(1, stream, input).unwrap();
+        let mut client = BufReader::new(client);
+        client.get_mut().write_all(b"{\n").unwrap();
+        let read_error = |client: &mut BufReader<UnixStream>| {
+            let frame = read_frame(client).unwrap().unwrap();
+            let WireMessage::Message { message, .. } = serde_json::from_slice(&frame).unwrap()
+            else {
+                panic!("expected reply");
+            };
+            message.error.unwrap().code
+        };
+        assert_eq!(read_error(&mut client), "malformed");
+        let oversized = vec![b'x'; crate::protocol::MAX_FRAME];
+        client.get_mut().write_all(&oversized).unwrap();
+        assert_eq!(read_error(&mut client), "frame_size");
+        assert!(read_frame(&mut client).unwrap().is_none());
     }
 
     #[test]
