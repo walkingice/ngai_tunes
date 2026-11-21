@@ -259,7 +259,7 @@ impl App {
             KeyCode::Enter if state.status == Status::Stopping => Command::Restart,
             KeyCode::Enter => Command::Stop,
             KeyCode::Char('n') => Command::Next,
-            KeyCode::Char('p') => Command::Previous,
+            KeyCode::Char('p' | 'N') => Command::Previous,
             KeyCode::Char('r') => Command::SetRepeat(match state.repeat {
                 Repeat::Off => Repeat::All,
                 Repeat::All => Repeat::One,
@@ -334,10 +334,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|state| state.status == Status::Stopping) =>
             {
-                "[Enter] Restart   [Space] Pause/Resume   [N/P] Next/Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] Restart   [Space] Pause/Resume   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
             Focus::Playback => {
-                "[Enter] Stop   [Space] Pause/Resume   [N/P] Next/Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] Stop   [Space] Pause/Resume   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
             }
         };
         frame.render_widget(
@@ -520,5 +520,33 @@ mod tests {
         ));
         app.snapshot.as_mut().unwrap().status = Status::Stopping;
         assert!(app.playback_command(KeyCode::Right).is_none());
+    }
+
+    #[test]
+    fn playback_uses_case_to_distinguish_next_and_previous() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.snapshot = Some(Snapshot {
+            revision: 0,
+            queue: Vec::new(),
+            current: None,
+            status: Status::Stopping,
+            position_ms: 0,
+            duration_ms: None,
+            repeat: Repeat::Off,
+            order: Order::Sequential,
+            error: None,
+        });
+        assert!(app.playback_command(KeyCode::Char('N')).is_none());
+        app.focus = Focus::Playback;
+        assert!(matches!(
+            app.playback_command(KeyCode::Char('n')),
+            Some(Command::Next)
+        ));
+        for key in ['N', 'p'] {
+            assert!(matches!(
+                app.playback_command(KeyCode::Char(key)),
+                Some(Command::Previous)
+            ));
+        }
     }
 }

@@ -33,8 +33,8 @@ With repeat off, the daemon exits when it reaches the end of the queue.
 
 In Playing, Left/Right seek by five seconds while playing or paused.
 Use Tab to focus Playback. Enter stops or restarts the retained track.
-N/P move to the next or previous track, Left/Right seek by five seconds,
-R cycles repeat, and O toggles sequential or random order. Repeat-one
+`n` moves to the next track, and `N` or `p` moves to the previous track.
+Left/Right seek by five seconds, R cycles repeat, and O toggles playback order. Repeat-one
 applies to natural endings. Manual next and previous follow play order.
 In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
