@@ -60,14 +60,20 @@ mod tests {
         for name in ["z.MP3", "a.flac", "ignore.txt", "nested/song.mp3"] {
             fs::write(root.path().join(name), []).unwrap();
         }
+        fs::write(
+            root.path().join("tagged.mp3"),
+            include_bytes!("../../tests/fixtures/tone.mp3"),
+        )
+        .unwrap();
         let tracks = scan(root.path()).unwrap();
         assert_eq!(
             tracks
                 .iter()
                 .map(|track| track.title.as_str())
                 .collect::<Vec<_>>(),
-            ["a.flac", "z.MP3"]
+            ["a.flac", "Fixture tone", "z.MP3"]
         );
+        assert_eq!(tracks[1].artist.as_deref(), Some("ngai_tunes"));
         assert!(tracks.iter().all(|track| track.path.is_absolute()));
         assert!(scan(&root.path().join("missing")).is_err());
     }

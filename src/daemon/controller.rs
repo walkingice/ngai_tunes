@@ -85,7 +85,7 @@ impl<E: Engine> Controller<E> {
                 }
             }
             Quit => self.shutdown = true,
-            ExitOnStopping => self.shutdown = self.state.status == Status::Stopping,
+            ExitOnStopping => self.shutdown |= self.state.status == Status::Stopping,
         }
         self.state.revision += 1;
         Ok(())
@@ -120,11 +120,11 @@ impl<E: Engine> Controller<E> {
 
     fn reset_cycle(&mut self) {
         self.cycle = (0..self.state.queue.len()).collect();
-        if self.state.order == Order::Random {
-            if let Some(current) = self.state.current {
-                self.cycle.swap(0, current);
-                self.rng.shuffle(&mut self.cycle[1..]);
-            }
+        if self.state.order == Order::Random
+            && let Some(current) = self.state.current
+        {
+            self.cycle.swap(0, current);
+            self.rng.shuffle(&mut self.cycle[1..]);
         }
     }
 
