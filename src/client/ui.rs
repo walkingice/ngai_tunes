@@ -56,6 +56,7 @@ enum Page {
 enum ScanDialog {
     Edit { index: Option<usize>, text: String },
     Delete(usize),
+    ConfirmScan,
 }
 
 struct Notice {
@@ -516,7 +517,7 @@ impl App {
                 text: String::new(),
             })
         } else {
-            None
+            Some(ScanDialog::ConfirmScan)
         };
     }
 
@@ -534,7 +535,12 @@ impl App {
                     return;
                 }
             }
-            (ScanDialog::Delete(_), KeyCode::Char('n')) => return,
+            (ScanDialog::Delete(_), KeyCode::Char('n'))
+            | (ScanDialog::ConfirmScan, KeyCode::Char('n')) => return,
+            (ScanDialog::ConfirmScan, KeyCode::Enter | KeyCode::Char('y')) => {
+                self.show_notice(Level::Info, "Scanning is not implemented yet");
+                return;
+            }
             (ScanDialog::Edit { index, text }, KeyCode::Enter) if !text.trim().is_empty() => {
                 let mut config = self.notice_config.clone();
                 if let Some(index) = index {
@@ -617,6 +623,11 @@ impl App {
 
     fn render_scan_dialog(&self, frame: &mut Frame, dialog: &ScanDialog) {
         let (title, text, buttons) = match dialog {
+            ScanDialog::ConfirmScan => (
+                "Scan directories",
+                "Clear the existing music database and scan again?".into(),
+                "[Enter/Y] Scan    [Esc/N] Cancel",
+            ),
             ScanDialog::Delete(index) => (
                 "Delete directory",
                 format!(
@@ -839,6 +850,32 @@ fn clock(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_requires_confirmation_and_does_not_change_targets() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.page = Page::Scan;
+        app.focus = Focus::Main;
+        app.notice_config.scan_directories = vec!["/music".into()];
+        app.scan_cursor = 3;
+        for cancel in [KeyCode::Esc, KeyCode::Char('n')] {
+            app.key(KeyCode::Enter);
+            assert!(matches!(app.scan_dialog, Some(ScanDialog::ConfirmScan)));
+            app.key(cancel);
+            assert!(app.scan_dialog.is_none());
+            assert_eq!(app.notice_config.scan_directories, ["/music"]);
+        }
+        for confirm in [KeyCode::Enter, KeyCode::Char('y')] {
+            app.key(KeyCode::Enter);
+            app.key(confirm);
+            assert!(app.scan_dialog.is_none());
+            assert_eq!(app.notice_config.scan_directories, ["/music"]);
+            assert_eq!(
+                app.info.as_ref().unwrap().text,
+                "Scanning is not implemented yet"
+            );
+        }
+    }
 
     #[test]
     fn scan_targets_can_be_added_edited_and_deleted() {
