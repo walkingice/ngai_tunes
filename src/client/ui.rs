@@ -546,8 +546,14 @@ impl App {
                 self.tabs()
                     .iter()
                     .map(|&(page, label)| {
-                        let prefix = if self.page == page { "> " } else { "  " };
-                        Line::from(format!("{prefix}{label}"))
+                        let active = self.page == page;
+                        let prefix = if active { "> " } else { "  " };
+                        let style = if active && self.focus == Focus::Sidebar {
+                            Style::default().add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        Line::from(vec![Span::raw(prefix), Span::styled(label, style)])
                     })
                     .collect::<Vec<_>>(),
             )
