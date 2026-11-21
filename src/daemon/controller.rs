@@ -261,6 +261,9 @@ mod tests {
                 title: path.to_string(),
                 artist: None,
                 album: None,
+                track_number: None,
+                duration_ms: None,
+                genre: None,
             })
             .collect();
         controller

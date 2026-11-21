@@ -1,5 +1,8 @@
 use crate::protocol::Track;
-use lofty::{file::TaggedFileExt, prelude::Accessor};
+use lofty::{
+    file::{AudioFile, TaggedFileExt},
+    prelude::Accessor,
+};
 use std::{fs, io, path::Path};
 
 pub fn scan(directory: &Path) -> io::Result<Vec<Track>> {
@@ -45,6 +48,13 @@ fn read_track(path: std::path::PathBuf) -> Track {
         album: tag
             .and_then(Accessor::album)
             .map(|value| value.into_owned()),
+        track_number: tag.and_then(Accessor::track),
+        duration_ms: file
+            .as_ref()
+            .map(|file| crate::playback::millis(file.properties().duration())),
+        genre: tag
+            .and_then(Accessor::genre)
+            .map(|value| value.into_owned()),
         path,
     }
 }
@@ -74,6 +84,9 @@ mod tests {
             ["a.flac", "Fixture tone", "z.MP3"]
         );
         assert_eq!(tracks[1].artist.as_deref(), Some("ngai_tunes"));
+        assert!(tracks[1].duration_ms.is_some_and(|duration| duration > 0));
+        assert_eq!(tracks[0].track_number, None);
+        assert_eq!(tracks[0].genre, None);
         assert!(tracks.iter().all(|track| track.path.is_absolute()));
         assert!(scan(&root.path().join("missing")).is_err());
     }

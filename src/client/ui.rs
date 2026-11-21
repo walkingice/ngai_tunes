@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
     io,
@@ -473,29 +473,60 @@ impl App {
             .snapshot
             .as_ref()
             .and_then(|state| state.current.and_then(|index| state.queue.get(index)));
-        let items = self.tracks.iter().map(|track| {
+        let rows = self.tracks.iter().map(|track| {
             let playing = if current.is_some_and(|live| live.path == track.path) {
-                "♪ "
+                "♪"
             } else {
-                "  "
+                ""
             };
-            let suffix = track
-                .artist
-                .as_ref()
-                .map_or(String::new(), |artist| format!(" — {artist}"));
-            ListItem::new(format!("{playing}{}{suffix}", track.title))
+            Row::new(vec![
+                playing.to_string(),
+                track
+                    .track_number
+                    .map_or_else(String::new, |number| number.to_string()),
+                track.title.clone(),
+                track.duration_ms.map_or_else(String::new, clock),
+                track.artist.clone().unwrap_or_default(),
+                track.album.clone().unwrap_or_default(),
+                track.genre.clone().unwrap_or_default(),
+            ])
         });
         let name = self
             .source
             .as_ref()
             .map_or_else(|| "Queue".into(), |source| source.display().to_string());
         let mut state =
-            ListState::default().with_selected((!self.tracks.is_empty()).then_some(self.cursor));
-        let list = List::new(items)
+            TableState::default().with_selected((!self.tracks.is_empty()).then_some(self.cursor));
+        let time_width = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.duration_ms)
+            .map(|duration| clock(duration).len().min(u16::MAX as usize) as u16)
+            .max()
+            .unwrap_or(0)
+            .max(5);
+        let widths = [
+            Constraint::Length(7),
+            Constraint::Length(12),
+            Constraint::Fill(3),
+            Constraint::Length(time_width),
+            Constraint::Fill(2),
+            Constraint::Fill(2),
+            Constraint::Min(5),
+        ];
+        let table = Table::new(rows, widths)
+            .header(Row::new([
+                "Playing",
+                "Track number",
+                "Title",
+                "Time",
+                "Artist",
+                "Album",
+                "Genre",
+            ]))
             .block(self.panel(name, Focus::Main))
-            .highlight_symbol("> ")
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
-        frame.render_stateful_widget(list, area, &mut state);
+            .row_highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+        frame.render_stateful_widget(table, area, &mut state);
     }
 
     fn render_playback(&self, frame: &mut Frame, area: ratatui::layout::Rect) {

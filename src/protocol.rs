@@ -8,6 +8,12 @@ pub struct Track {
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
+    #[serde(default)]
+    pub track_number: Option<u32>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub genre: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -150,6 +156,17 @@ mod unix_path {
 mod tests {
     use super::*;
     use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn reads_track_without_new_metadata() {
+        let track: Track = serde_json::from_str(
+            r#"{"path":"/song.mp3","title":"Song","artist":null,"album":null}"#,
+        )
+        .unwrap();
+        assert_eq!(track.track_number, None);
+        assert_eq!(track.duration_ms, None);
+        assert_eq!(track.genre, None);
+    }
 
     #[test]
     fn reads_multiple_frames_with_small_buffers_and_bounds_input() {
