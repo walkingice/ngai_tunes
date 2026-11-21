@@ -5,7 +5,8 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use std::{
     io,
@@ -308,7 +309,7 @@ impl App {
     fn render(&self, frame: &mut Frame) {
         let [top, playback, info, keys] = Layout::vertical([
             Constraint::Min(3),
-            Constraint::Length(5),
+            Constraint::Length(6),
             Constraint::Length(3),
             Constraint::Length(3),
         ])
@@ -412,28 +413,42 @@ impl App {
             .current
             .and_then(|index| state.queue.get(index))
             .map_or("—", |track| &track.title);
-        let [details, progress] =
-            Layout::vertical([Constraint::Length(2), Constraint::Length(1)]).areas(inner);
         let position = self.position();
-        frame.render_widget(
-            Paragraph::new(format!(
-                "{track} · {:?}\n{} · Repeat {:?} · {:?}",
-                state.status,
-                clock(position),
-                state.repeat,
-                state.order
-            )),
-            details,
-        );
-        if let Some(duration) = state.duration_ms.filter(|&duration| duration > 0) {
-            frame.render_widget(
-                Gauge::default()
-                    .ratio(position as f64 / duration as f64)
-                    .gauge_style(Style::default().fg(Color::Cyan))
-                    .label(format!("{} / {}", clock(position), clock(duration))),
-                progress,
-            );
-        }
+        let duration = state.duration_ms.map_or_else(|| "—".into(), clock);
+        let width = usize::from(inner.width);
+        let filled = state
+            .duration_ms
+            .filter(|&duration| duration > 0)
+            .map_or(0, |duration| {
+                (u128::from(position.min(duration)) * width as u128 / u128::from(duration)) as usize
+            });
+        let progress = Line::from(vec![
+            Span::styled("█".repeat(filled), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                "░".repeat(width - filled),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]);
+        let order = match state.order {
+            Order::Sequential => "→",
+            Order::Random => "⤨",
+        };
+        let play = match state.status {
+            Status::Playing => "⏸",
+            Status::Pausing | Status::Stopping => "▶",
+        };
+        let repeat = match state.repeat {
+            Repeat::Off => "•",
+            Repeat::All => "↻",
+            Repeat::One => "↻₁",
+        };
+        let lines = vec![
+            Line::from(track),
+            Line::from(format!("{} / {duration}", clock(position))),
+            progress,
+            Line::from(format!("{order}   ≪   {play}   ≫   {repeat}")).centered(),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
