@@ -1,4 +1,8 @@
-use super::{ipc::Connection, recursive_scan::Scan};
+use super::{
+    ipc::Connection,
+    library::{self, FACETS, Library},
+    recursive_scan::Scan,
+};
 use crate::protocol::{Command, Message, Order, Repeat, Snapshot, Status, Track};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
@@ -6,12 +10,15 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, List, ListState, Padding, Paragraph, Row, Table, TableState,
+        Wrap,
+    },
 };
 use std::{
     io,
     path::PathBuf,
-    sync::mpsc::TryRecvError,
+    sync::mpsc::{Receiver, TryRecvError},
     time::{Duration, Instant},
 };
 
@@ -49,7 +56,32 @@ type NoticeConfig = Config;
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Playing,
+    Scanned,
     Scan,
+}
+
+impl Page {
+    const TABS: [(Self, &str); 3] = [
+        (Self::Playing, "Playing"),
+        (Self::Scanned, "Scanned"),
+        (Self::Scan, "Scan"),
+    ];
+
+    fn step(self, offset: usize) -> Self {
+        let index = Self::TABS
+            .iter()
+            .position(|(page, _)| *page == self)
+            .unwrap();
+        Self::TABS[(index + offset) % Self::TABS.len()].0
+    }
+
+    fn main_focus(self) -> Focus {
+        if self == Self::Scanned {
+            Focus::Filter(0)
+        } else {
+            Focus::Main
+        }
+    }
 }
 
 enum ScanDialog {
@@ -74,6 +106,7 @@ impl Notice {
 #[derive(Clone, Copy, PartialEq)]
 enum Focus {
     Sidebar,
+    Filter(usize),
     Main,
     Playback,
 }
@@ -90,6 +123,8 @@ pub struct App {
     notice_config: NoticeConfig,
     confirm: bool,
     page: Page,
+    library: Library,
+    library_load: Option<Receiver<io::Result<Library>>>,
     scan_cursor: usize,
     scan_dialog: Option<ScanDialog>,
     store: Option<ConfigStore>,
@@ -128,6 +163,8 @@ impl App {
             store,
             config_valid,
             page: Page::Playing,
+            library: Library::default(),
+            library_load: None,
             scan_cursor: 0,
             scan_dialog: None,
             confirm: false,
@@ -143,6 +180,7 @@ impl App {
     }
 
     pub fn run(&mut self) -> io::Result<()> {
+        self.reload_library();
         self.initialize();
         let mut terminal = ratatui::try_init()?;
         let result = self.event_loop(&mut terminal);
@@ -185,6 +223,7 @@ impl App {
             {
                 return Ok(());
             }
+            self.poll_library();
             if scan_was_running {
                 self.poll_scan();
             }
@@ -270,17 +309,19 @@ impl App {
     }
 
     fn play_selection(&mut self) {
-        if self.tracks.is_empty() {
+        let (tracks, cursor) = self.songs();
+        if tracks.is_empty() {
             return;
         }
+        let queue = tracks.to_vec();
         match Connection::start() {
             Ok(connection) => {
                 self.connection = Some(connection);
                 self.pending = None;
                 self.snapshot = None;
                 self.send(Command::ReplaceAndPlay {
-                    queue: self.tracks.clone(),
-                    selected: self.cursor,
+                    queue,
+                    selected: cursor,
                 });
             }
             Err(error) => self.show_notice(Level::Error, error.to_string()),
@@ -315,6 +356,18 @@ impl App {
             }
             return false;
         }
+        match (key, self.focus) {
+            (KeyCode::Up | KeyCode::Down, Focus::Filter(index)) => {
+                let filter = &mut self.library.filters[index];
+                filter.cursor = move_cursor(filter.cursor, filter.values.len() + 1, key);
+                return false;
+            }
+            (KeyCode::Enter, Focus::Filter(index)) => {
+                self.library.apply(index);
+                return false;
+            }
+            _ => {}
+        }
         match key {
             KeyCode::Esc => {
                 self.finish(Command::ExitOnStopping);
@@ -327,18 +380,17 @@ impl App {
             }
             KeyCode::Tab => {
                 self.focus = match self.focus {
-                    Focus::Sidebar => Focus::Main,
+                    Focus::Sidebar => self.page.main_focus(),
+                    Focus::Filter(index) if index + 1 < FACETS.len() => Focus::Filter(index + 1),
+                    Focus::Filter(_) => Focus::Main,
                     Focus::Main => Focus::Playback,
                     Focus::Playback => Focus::Sidebar,
                 }
             }
-            KeyCode::Up | KeyCode::Down if self.focus == Focus::Sidebar => {
-                self.page = if self.page == Page::Playing {
-                    Page::Scan
-                } else {
-                    Page::Playing
-                };
+            KeyCode::Up if self.focus == Focus::Sidebar => {
+                self.page = self.page.step(Page::TABS.len() - 1)
             }
+            KeyCode::Down if self.focus == Focus::Sidebar => self.page = self.page.step(1),
             KeyCode::Up if self.focus == Focus::Main && self.page == Page::Scan => {
                 self.scan_cursor = self.scan_cursor.saturating_sub(1);
             }
@@ -349,12 +401,17 @@ impl App {
             KeyCode::Enter if self.focus == Focus::Main && self.page == Page::Scan => {
                 self.scan_activate()
             }
-            KeyCode::Up if self.focus == Focus::Main => self.cursor = self.cursor.saturating_sub(1),
-            KeyCode::Down if self.focus == Focus::Main => {
-                self.cursor = (self.cursor + 1).min(self.tracks.len().saturating_sub(1));
+            KeyCode::Up | KeyCode::Down if self.focus == Focus::Main => {
+                let (songs, cursor) = self.songs();
+                let cursor = move_cursor(cursor, songs.len(), key);
+                if self.page == Page::Scanned {
+                    self.library.cursor = cursor;
+                } else {
+                    self.cursor = cursor;
+                }
             }
             KeyCode::Enter if self.focus == Focus::Main => self.play_selection(),
-            KeyCode::Enter if self.focus == Focus::Sidebar => self.focus = Focus::Main,
+            KeyCode::Enter if self.focus == Focus::Sidebar => self.focus = self.page.main_focus(),
             KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
             _ => {
                 if let Some(command) = self.playback_command(key) {
@@ -367,12 +424,12 @@ impl App {
 
     fn playback_command(&self, key: KeyCode) -> Option<Command> {
         let state = self.snapshot.as_ref()?;
-        let playing_tab_seek = self.focus == Focus::Main
-            && self.page == Page::Playing
+        let song_list_seek = self.focus == Focus::Main
+            && self.page != Page::Scan
             && state.current.is_some()
             && matches!(state.status, Status::Playing | Status::Pausing)
             && matches!(key, KeyCode::Left | KeyCode::Right);
-        if self.focus != Focus::Playback && !playing_tab_seek {
+        if self.focus != Focus::Playback && !song_list_seek {
             return None;
         }
         Some(match key {
@@ -427,7 +484,7 @@ impl App {
 
     fn render(&self, frame: &mut Frame) {
         let [top, playback, info, keys] = Layout::vertical([
-            Constraint::Min(3),
+            Constraint::Min(5),
             Constraint::Length(5),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -436,25 +493,21 @@ impl App {
         let [sidebar, main] =
             Layout::horizontal([Constraint::Length(13), Constraint::Min(0)]).areas(top);
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(if self.page == Page::Playing {
-                    "> Playing"
-                } else {
-                    "  Playing"
-                }),
-                Line::from(if self.page == Page::Scan {
-                    "> Scan"
-                } else {
-                    "  Scan"
-                }),
-            ])
+            Paragraph::new(
+                Page::TABS
+                    .map(|(page, label)| {
+                        let prefix = if self.page == page { "> " } else { "  " };
+                        Line::from(format!("{prefix}{label}"))
+                    })
+                    .to_vec(),
+            )
             .block(self.panel("Tabs".into(), Focus::Sidebar)),
             sidebar,
         );
-        if self.page == Page::Playing {
-            self.render_list(frame, main);
-        } else {
-            self.render_scan(frame, main);
+        match self.page {
+            Page::Playing => self.render_list(frame, main),
+            Page::Scanned => self.render_library(frame, main),
+            Page::Scan => self.render_scan(frame, main),
         }
         self.render_playback(frame, playback);
         if let Some(notice) = self
@@ -471,6 +524,7 @@ impl App {
         }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
+            Focus::Filter(_) => "[↑/↓] Move   [Enter] Filter",
             Focus::Main if self.page == Page::Scan => "[↑/↓] Select   [Enter] Activate",
             Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
             Focus::Playback
@@ -595,7 +649,11 @@ impl App {
         };
         self.scan_dialog = None;
         match result.and_then(|writer| writer.publish()) {
-            Ok(()) => self.show_notice(Level::Info, "Scan complete"),
+            Ok(()) => {
+                self.show_notice(Level::Info, "Scan complete");
+                self.reload_library();
+            }
+
             Err(error) => self.show_notice(Level::Error, format!("Scan failed: {error}")),
         }
     }
@@ -626,7 +684,7 @@ impl App {
     }
 
     fn render_scan(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::widgets::{List, ListItem, ListState};
+        use ratatui::widgets::ListItem;
         let mut items = Vec::new();
         for path in &self.notice_config.scan_directories {
             items.push(ListItem::new(format!("  {path}")));
@@ -707,12 +765,88 @@ impl App {
         render_dialog(frame, title, &text, buttons);
     }
 
+    fn reload_library(&mut self) {
+        let result = self
+            .store
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Config directory unavailable"))
+            .and_then(|store| library::load(store.database()));
+        self.library_load = match result {
+            Ok(receiver) => Some(receiver),
+            Err(error) => {
+                self.library_load_failed(error);
+                None
+            }
+        };
+    }
+
+    fn poll_library(&mut self) {
+        let Some(receiver) = &self.library_load else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(library)) => self.library = library,
+            Ok(Err(error)) => self.library_load_failed(error),
+            Err(TryRecvError::Disconnected) => self.library_load_failed("loader disconnected"),
+            Err(TryRecvError::Empty) => return,
+        }
+        self.library_load = None;
+    }
+
+    fn library_load_failed(&mut self, error: impl std::fmt::Display) {
+        self.library = Library::default();
+        self.show_notice(
+            Level::Error,
+            format!("Could not load database.jsonl: {error}"),
+        );
+    }
+
+    fn songs(&self) -> (&[Track], usize) {
+        if self.page == Page::Scanned {
+            (&self.library.songs, self.library.cursor)
+        } else {
+            (&self.tracks, self.cursor)
+        }
+    }
+
+    fn render_library(&self, frame: &mut Frame, area: Rect) {
+        let [facets, songs] =
+            Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(area);
+        let columns = Layout::horizontal([Constraint::Fill(1); FACETS.len()]).split(facets);
+        for (index, name) in FACETS.into_iter().enumerate() {
+            let focus = Focus::Filter(index);
+            let filter = &self.library.filters[index];
+            let items = std::iter::once("All")
+                .chain(filter.values.iter().map(String::as_str))
+                .enumerate()
+                .map(|(row, label)| {
+                    let marker = if row == filter.selected { "*" } else { " " };
+                    format!("{marker} {label}")
+                });
+            let list = List::new(items)
+                .block(self.panel(name.into(), focus))
+                .highlight_style(self.selection_style(focus));
+            let mut state = ListState::default().with_selected(Some(filter.cursor));
+            frame.render_stateful_widget(list, columns[index], &mut state);
+        }
+        self.render_list(frame, songs);
+    }
+
+    fn selection_style(&self, focus: Focus) -> Style {
+        if self.focus == focus {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White).bg(Color::DarkGray)
+        }
+    }
+
     fn render_list(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        let (tracks, cursor) = self.songs();
         let current = self
             .snapshot
             .as_ref()
             .and_then(|state| state.current.and_then(|index| state.queue.get(index)));
-        let rows = self.tracks.iter().map(|track| {
+        let rows = tracks.iter().map(|track| {
             let playing = if current.is_some_and(|live| live.path == track.path) {
                 "♪"
             } else {
@@ -735,22 +869,22 @@ impl App {
                 Cell::from(track.genre.clone().unwrap_or_default()),
             ])
         });
-        let name = self
-            .source
-            .as_ref()
-            .map_or_else(|| "Queue".into(), |source| source.display().to_string());
-        let mut state =
-            TableState::default().with_selected((!self.tracks.is_empty()).then_some(self.cursor));
-        let time_width = self
-            .tracks
+        let name = match self.page {
+            Page::Scanned => "Songs".into(),
+            _ => self
+                .source
+                .as_ref()
+                .map_or_else(|| "Queue".into(), |source| source.display().to_string()),
+        };
+        let mut state = TableState::default().with_selected((!tracks.is_empty()).then_some(cursor));
+        let time_width = tracks
             .iter()
             .filter_map(|track| track.duration_ms)
             .map(|duration| clock(duration).len().min(u16::MAX as usize) as u16)
             .max()
             .unwrap_or(0)
             .max(5);
-        let track_width = self
-            .tracks
+        let track_width = tracks
             .iter()
             .filter_map(|track| track.track_number)
             .map(|number| number.to_string().len() as u16)
@@ -766,18 +900,13 @@ impl App {
             Constraint::Fill(2),
             Constraint::Min(5),
         ];
-        let highlight = if self.focus == Focus::Main {
-            Style::default().fg(Color::Black).bg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::White).bg(Color::DarkGray)
-        };
         let table = Table::new(rows, widths)
             .header(
                 Row::new(["", "Track", "Title", "Time", "Artist", "Album", "Genre"])
                     .style(Style::default().fg(Color::DarkGray)),
             )
             .block(self.panel(name, Focus::Main))
-            .row_highlight_style(highlight);
+            .row_highlight_style(self.selection_style(Focus::Main));
         frame.render_stateful_widget(table, area, &mut state);
     }
 
@@ -831,6 +960,14 @@ impl App {
             ),
         );
         frame.render_widget(time.right_aligned(), controls);
+    }
+}
+
+fn move_cursor(cursor: usize, count: usize, key: KeyCode) -> usize {
+    if key == KeyCode::Up {
+        cursor.saturating_sub(1)
+    } else {
+        (cursor + 1).min(count.saturating_sub(1))
     }
 }
 
@@ -903,6 +1040,64 @@ fn clock(ms: u64) -> String {
 mod tests {
     use super::*;
 
+    fn wait_for_library(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.library_load.is_some() && Instant::now() < deadline {
+            app.poll_library();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(app.library_load.is_none());
+    }
+
+    #[test]
+    fn scanned_tab_filters_after_enter_and_clears_on_load_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Vec::new(), None);
+        let store = ConfigStore::new(dir.path().join("config.json"));
+        let track = |title: &str, genre: &str| crate::storage::database::ScanTrack {
+            path: dir.path().join(title),
+            title: title.into(),
+            duration_ms: None,
+            artists: vec![],
+            album: None,
+            genres: vec![genre.into()],
+            track_number: None,
+        };
+        let mut writer = store.database().stage().unwrap();
+        writer.write(&track("First", "Jazz")).unwrap();
+        writer.write(&track("Second", "Rock")).unwrap();
+        writer.publish().unwrap();
+        app.store = Some(store);
+        app.reload_library();
+        assert!(app.library.songs.is_empty());
+        wait_for_library(&mut app);
+
+        app.key(KeyCode::Tab);
+        app.key(KeyCode::Tab);
+        app.key(KeyCode::Down);
+        app.key(KeyCode::Enter);
+        assert!(app.page == Page::Scanned);
+        assert!(app.focus == Focus::Filter(0));
+        app.key(KeyCode::Down);
+        assert_eq!(app.library.songs.len(), 2);
+        app.key(KeyCode::Enter);
+        assert_eq!(app.library.songs[0].title, "First");
+        assert_eq!(app.library.songs.len(), 1);
+        for _ in 0..3 {
+            app.key(KeyCode::Tab);
+        }
+        assert!(app.focus == Focus::Main);
+        assert_eq!(app.songs().0.len(), 1);
+
+        std::fs::write(dir.path().join("database.jsonl"), b"{").unwrap();
+        app.reload_library();
+        wait_for_library(&mut app);
+        assert!(app.library.songs.is_empty());
+        let notice = app.info.as_ref().unwrap();
+        assert_eq!(notice.level, Level::Error);
+        assert!(notice.text.contains("database.jsonl"));
+    }
+
     #[test]
     fn scan_requires_confirmation_and_does_not_change_targets() {
         let mut app = App::new(None, Vec::new(), None);
@@ -951,8 +1146,8 @@ mod tests {
         }
         assert!(app.scan_dialog.is_none());
         assert_eq!(app.info.as_ref().unwrap().text, "Scan complete");
-        let tracks = app.store.as_ref().unwrap().database().load().unwrap();
-        assert_eq!(tracks[0].title, "song.flac");
+        wait_for_library(&mut app);
+        assert_eq!(app.library.songs[0].title, "song.flac");
     }
 
     #[test]
@@ -963,6 +1158,7 @@ mod tests {
         app.config_valid = true;
         app.notice_config = Config::default();
         app.focus = Focus::Sidebar;
+        app.key(KeyCode::Down);
         app.key(KeyCode::Down);
         app.key(KeyCode::Enter);
         app.key(KeyCode::Enter);
