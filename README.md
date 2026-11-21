@@ -43,7 +43,7 @@ restarts the retained track.
 Press uppercase `P` to focus Playback or uppercase `S` to focus the visible
 song list.
 `n` moves to the next track, and `N` or `p` moves to the previous track.
-Left/Right seek by five seconds, R cycles repeat, and O toggles playback order. Repeat-one
+Left/Right seek by five seconds, `r` cycles repeat, and `o` toggles playback order. Repeat-one
 applies to natural endings. Manual next and previous follow play order.
 In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
@@ -55,6 +55,7 @@ removal. Add directory creates a target. The Scan button asks for confirmation; 
 Targets are saved in `config.json` under `scan_directories`.
 
 In Scanned, Tab cycles from the song list through the filters and Playback.
+Press uppercase `R` to reset all filters to `All`.
 
 See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
 

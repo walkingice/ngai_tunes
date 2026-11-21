@@ -60,6 +60,14 @@ impl Library {
         }
     }
 
+    pub fn reset_filters(&mut self) {
+        for filter in &mut self.filters {
+            filter.cursor = 0;
+            filter.selected = 0;
+        }
+        self.update_songs();
+    }
+
     fn update_songs(&mut self) {
         self.songs = self
             .entries
@@ -136,6 +144,11 @@ mod tests {
         library.filters[0].cursor = 0;
         library.apply(0);
         assert_eq!(library.songs.len(), 2);
+        library.reset_filters();
+        assert_eq!(library.songs.len(), 4);
+        assert!(library.filters.iter().all(|filter| {
+            filter.selected == 0 && filter.cursor == 0 && !filter.values.is_empty()
+        }));
     }
 
     #[test]

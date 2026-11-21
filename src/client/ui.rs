@@ -430,6 +430,7 @@ impl App {
             KeyCode::Char('T') => self.focus = Focus::Sidebar,
             KeyCode::Char('P') => self.focus = Focus::Playback,
             KeyCode::Char('S') if self.page != Page::Scan => self.focus = Focus::Main,
+            KeyCode::Char('R') if self.page == Page::Scanned => self.library.reset_filters(),
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Main if self.page == Page::Scanned => Focus::Filter(0),
@@ -609,9 +610,14 @@ impl App {
         } else {
             "Quit"
         };
+        let reset_key = if self.page == Page::Scanned {
+            "[R] Reset filters   "
+        } else {
+            ""
+        };
         frame.render_widget(
             Paragraph::new(format!(
-                "[Tab] Focus   [T] Tabs   [P] Playback{songs_key}   {keys_text}   [Esc] Detach   [q] {quit_action}"
+                "{reset_key}[Tab] Focus   [T] Tabs   [P] Playback{songs_key}   {keys_text}   [Esc] Detach   [q] {quit_action}"
             ))
             .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
@@ -1152,6 +1158,10 @@ mod tests {
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Main);
         assert_eq!(app.songs().0.len(), 1);
+        app.key(KeyCode::Char('R'));
+        assert_eq!(app.songs().0.len(), 2);
+        assert_eq!(app.library.filters[0].selected, 0);
+        assert_eq!(app.library.filters[0].cursor, 0);
 
         std::fs::write(dir.path().join("database.jsonl"), b"{").unwrap();
         app.reload_library();
