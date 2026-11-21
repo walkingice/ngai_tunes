@@ -245,23 +245,14 @@ fn handle_request(
     }
 
     if let Command::UploadQueue { segment, selected } = request.command {
-        let (tracks, selected) = match peer.upload(request.request_id, segment, selected) {
-            Ok(pending) => pending?,
-            Err(error) => return failure("invalid_segment", error),
-        };
-        let Ok(frames) = QueueFrames::new(controller.revision() + 1, &tracks) else {
-            return failure("frame_size", "A track is too large for a queue segment");
-        };
-        return match controller.command(Command::ReplaceAndPlay {
-            queue: tracks,
+        return complete_upload(
+            controller,
+            queue,
+            peer,
+            request.request_id,
+            segment,
             selected,
-        }) {
-            Ok(()) => {
-                *queue = frames;
-                Some(message(id, None, None))
-            }
-            Err(error) => failure("invalid_command", error),
-        };
+        );
     }
 
     let subscribe = matches!(request.command, Command::Subscribe);
@@ -278,6 +269,36 @@ fn handle_request(
         Ok(()) => {
             peer.subscribed |= subscribe;
             Some(message(id, snapshot.then(|| controller.snapshot()), None))
+        }
+        Err(error) => failure("invalid_command", error),
+    }
+}
+
+fn complete_upload(
+    controller: &mut Controller<impl Engine>,
+    queue: &mut QueueFrames,
+    peer: &mut Peer,
+    request_id: u64,
+    segment: QueueSegment,
+    selected: Option<usize>,
+) -> Option<Message> {
+    let id = Some(request_id);
+    let failure = |code, description| Some(message(id, None, Some((code, description))));
+    let (tracks, selected) = match peer.upload(request_id, segment, selected) {
+        // Acknowledge only when the full upload can be accepted or rejected.
+        Ok(pending) => pending?,
+        Err(error) => return failure("invalid_segment", error),
+    };
+    let Ok(frames) = QueueFrames::new(controller.revision() + 1, &tracks) else {
+        return failure("frame_size", "A track is too large for a queue segment");
+    };
+    match controller.command(Command::ReplaceAndPlay {
+        queue: tracks,
+        selected,
+    }) {
+        Ok(()) => {
+            *queue = frames;
+            Some(message(id, None, None))
         }
         Err(error) => failure("invalid_command", error),
     }
@@ -554,14 +575,23 @@ mod tests {
         uploader.stream.get_mut().write_all(&frames[0]).unwrap();
         let previous = uploader.request(3, Command::GetState).state.unwrap();
         assert_eq!(previous.queue[0].title, "Initial");
+        let previous = observer.request(2, Command::GetState).state.unwrap();
+        assert_eq!(previous.queue[0].title, "Initial");
 
         uploader.stream.get_mut().write_all(&frames[2]).unwrap();
         assert_eq!(uploader.reply(2).error.unwrap().code, "invalid_segment");
         drop(uploader);
-        let previous = observer.request(2, Command::GetState).state.unwrap();
+        let previous = observer.request(3, Command::GetState).state.unwrap();
         assert_eq!(previous.queue[0].title, "Initial");
 
         let mut uploader = test_peer(&socket);
+        let invalid = encode_upload(1, &[track("Rejected".into())], 1).unwrap();
+        uploader.write(&invalid[0]);
+        assert_eq!(uploader.reply(1).error.unwrap().code, "invalid_command");
+        let previous = observer.request(4, Command::GetState).state.unwrap();
+        assert_eq!(previous.queue[0].title, "Initial");
+        assert_eq!(previous.current, Some(0));
+
         for frame in frames {
             uploader.stream.get_mut().write_all(&frame).unwrap();
         }
