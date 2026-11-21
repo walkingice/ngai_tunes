@@ -2,6 +2,7 @@ mod client;
 mod daemon;
 mod playback;
 mod protocol;
+mod storage;
 
 use clap::Parser;
 use std::path::PathBuf;

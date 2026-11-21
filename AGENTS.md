@@ -44,8 +44,8 @@ The client owns focus and selection. The daemon owns playback state.
 ### Runtime and scope
 
 Target one OS user on the host. Use /tmp/ngai_tunes/daemon.sock and
-/tmp/ngai_tunes/daemon.lock. Reserve ~/.config/ngai_tunes/ for persistent
-files. Use flock and JSON Lines over a Unix domain socket. The daemon runs
+/tmp/ngai_tunes/daemon.lock. Store persistent configuration, including recursive music database scan targets,
+in ~/.config/ngai_tunes/config.json. Use flock and JSON Lines over a Unix domain socket. The daemon runs
 independently of systemd and launchd. Use a shared playback interface and
 implementation on both platforms, isolating platform differences as needed.
 
