@@ -40,7 +40,7 @@ This file defines the user-visible contract for the first release. The
 | Enter in Playback while playing or paused | Stop manually. Keep the daemon, queue and selected track in Stopping. |
 | Enter in Playback while manually stopped | Restart the retained track from zero. |
 | Esc | Send exit_on_stopping to an existing daemon and close the client. Only Stopping exits in response. |
-| q | Close this client and terminate any running daemon. Confirm only while playing. Cancel returns to the TUI. |
+| q | Stop a playing or paused track. In Stopping or without a daemon, close this client and terminate any running daemon. |
 | Natural end with another track due | Advance according to the daemon's playback order and repeat mode. |
 | Natural end with nothing left to play | Exit the daemon, even with a client attached. |
 | Track missing or unreadable | Skip it. Exit if the entire queue is unplayable, including under repeat. |

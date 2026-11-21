@@ -125,7 +125,6 @@ pub struct App {
     updated: Instant,
     info: Option<Notice>,
     notice_config: NoticeConfig,
-    confirm: bool,
     page: Page,
     library: Library,
     library_load: Option<Receiver<io::Result<Library>>>,
@@ -178,7 +177,6 @@ impl App {
             library_load: None,
             scan_cursor: 0,
             scan_dialog: None,
-            confirm: false,
             initialized: false,
             pending: None,
             pending_play: None,
@@ -233,9 +231,9 @@ impl App {
             if event::poll(Duration::from_millis(75))?
                 && let Event::Key(key) = event::read()?
                 && key.kind != KeyEventKind::Release
-                && !(scan_was_running
-                    && key.kind == KeyEventKind::Repeat
-                    && key.code == KeyCode::Enter)
+                && !(key.kind == KeyEventKind::Repeat
+                    && (key.code == KeyCode::Char('q')
+                        || (scan_was_running && key.code == KeyCode::Enter)))
                 && self.key(key.code)
             {
                 return Ok(());
@@ -387,26 +385,17 @@ impl App {
         }
     }
 
-    fn quit_requires_confirmation(&self) -> bool {
+    fn quit_key_stops_playback(&self) -> bool {
         self.snapshot
             .as_ref()
-            .is_some_and(|state| state.status == Status::Playing)
+            .map_or(self.connection.is_some(), |state| {
+                matches!(state.status, Status::Playing | Status::Pausing)
+            })
     }
 
     fn key(&mut self, key: KeyCode) -> bool {
         if self.scan_dialog.is_some() {
             self.scan_dialog_key(key);
-            return false;
-        }
-        if self.confirm {
-            match key {
-                KeyCode::Char('y') | KeyCode::Enter => {
-                    self.finish(Command::Quit);
-                    return true;
-                }
-                KeyCode::Esc | KeyCode::Char('n') => self.confirm = false,
-                _ => {}
-            }
             return false;
         }
         let key = match key {
@@ -433,7 +422,7 @@ impl App {
                 self.finish(Command::ExitOnStopping);
                 return true;
             }
-            KeyCode::Char('q') if self.quit_requires_confirmation() => self.confirm = true,
+            KeyCode::Char('q') if self.quit_key_stops_playback() => self.send(Command::Stop),
             KeyCode::Char('q') => {
                 self.finish(Command::Quit);
                 return true;
@@ -615,9 +604,14 @@ impl App {
         } else {
             "   [S] Songs"
         };
+        let quit_action = if self.quit_key_stops_playback() {
+            "Stop"
+        } else {
+            "Quit"
+        };
         frame.render_widget(
             Paragraph::new(format!(
-                "[Tab] Focus   [T] Tabs   [P] Playback{songs_key}   {keys_text}   [Esc] Detach   [q] Quit"
+                "[Tab] Focus   [T] Tabs   [P] Playback{songs_key}   {keys_text}   [Esc] Detach   [q] {quit_action}"
             ))
             .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
@@ -625,14 +619,6 @@ impl App {
         );
         if let Some(dialog) = &self.scan_dialog {
             self.render_scan_dialog(frame, dialog);
-        }
-        if self.confirm {
-            render_dialog(
-                frame,
-                "Quit",
-                "Stop playback and exit?",
-                "[Enter/y] Confirm    [Esc/n] Cancel",
-            );
         }
     }
 
@@ -1560,9 +1546,9 @@ mod tests {
     }
 
     #[test]
-    fn quit_requires_confirmation_only_while_playing() {
+    fn quit_key_stops_active_playback_without_closing_the_client() {
         let mut app = App::new(None, Vec::new(), None);
-        assert!(!app.quit_requires_confirmation());
+        assert!(!app.quit_key_stops_playback());
 
         for status in [Status::Stopping, Status::Pausing, Status::Playing] {
             app.snapshot = Some(Snapshot {
@@ -1576,12 +1562,13 @@ mod tests {
                 order: Order::Sequential,
                 error: None,
             });
-            assert_eq!(app.quit_requires_confirmation(), status == Status::Playing);
+            assert_eq!(app.quit_key_stops_playback(), status != Status::Stopping);
+            if status != Status::Stopping {
+                app.info = None;
+                assert!(!app.key(KeyCode::Char('q')));
+                assert_eq!(app.info.as_ref().unwrap().text, "No daemon is reachable");
+            }
         }
-        assert!(!app.key(KeyCode::Char('q')));
-        assert!(app.confirm);
-        assert!(!app.key(KeyCode::Esc));
-        assert!(!app.confirm);
     }
 
     #[test]

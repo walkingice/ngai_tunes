@@ -32,7 +32,8 @@ To start a session, pass a directory. In the Browsing tab, select a track
 with the arrow keys and press Enter to load the list into Playing and start
 playback. Playing shows the daemon queue and starts empty without a daemon.
 Space pauses or resumes. Esc detaches and asks a manually stopped daemon to exit.
-Press q to exit. If a track is playing, confirm to stop playback and exit.
+Press `q` to stop a playing or paused track. Press `q` again once playback
+has stopped to close the client and terminate the daemon.
 With repeat off, the daemon exits when it reaches the end of the queue.
 
 In Playing, Left/Right seek by five seconds while playing or paused.
