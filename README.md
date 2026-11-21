@@ -34,14 +34,17 @@ Press q to exit. If a track is playing, confirm to stop playback and exit.
 With repeat off, the daemon exits when it reaches the end of the queue.
 
 In Playing, Left/Right seek by five seconds while playing or paused.
-Use Tab to focus Playback. Enter stops or restarts the retained track.
+Tab switches focus between Main and Playback. Enter in Playback stops or
+restarts the retained track.
 `n` moves to the next track, and `N` or `p` moves to the previous track.
 Left/Right seek by five seconds, R cycles repeat, and O toggles playback order. Repeat-one
 applies to natural endings. Manual next and previous follow play order.
 In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
 
-Use Tab to focus the sidebar, then Up/Down to select Scan and Enter to open it.
+Press uppercase `T` to focus Tabs, then Up/Down to select Settings and Enter
+to open it. Press Tab from Tabs to return to Main.
+In Scanned, press `f` to cycle through the filters and the song list.
 Select a directory path to edit it, or select its Delete button to confirm
 removal. Add directory creates a target. The Scan button asks for confirmation; scanning is not implemented yet.
 Targets are saved in `config.json` under `scan_directories`.

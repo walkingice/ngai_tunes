@@ -423,13 +423,19 @@ impl App {
                 self.finish(Command::Quit);
                 return true;
             }
-            KeyCode::Tab => {
+            KeyCode::Char('T') => self.focus = Focus::Sidebar,
+            KeyCode::Char('f') if self.page == Page::Scanned => {
                 self.focus = match self.focus {
-                    Focus::Sidebar => self.page.main_focus(),
+                    Focus::Main => Focus::Filter(0),
                     Focus::Filter(index) if index + 1 < FACETS.len() => Focus::Filter(index + 1),
                     Focus::Filter(_) => Focus::Main,
-                    Focus::Main => Focus::Playback,
-                    Focus::Playback => Focus::Sidebar,
+                    focus => focus,
+                }
+            }
+            KeyCode::Tab => {
+                self.focus = match self.focus {
+                    Focus::Main | Focus::Filter(_) => Focus::Playback,
+                    Focus::Sidebar | Focus::Playback => Focus::Main,
                 }
             }
             KeyCode::Up if self.focus == Focus::Sidebar => {
@@ -572,7 +578,10 @@ impl App {
         }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
-            Focus::Filter(_) => "[↑/↓] Move   [Enter] Filter",
+            Focus::Filter(_) => "[f] Next section   [↑/↓] Move   [Enter] Filter",
+            Focus::Main if self.page == Page::Scanned => {
+                "[f] Filters   [↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸"
+            }
             Focus::Main if self.page == Page::Scan => "[↑/↓] Select   [Enter] Activate",
             Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
             Focus::Playback
@@ -589,7 +598,7 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(format!(
-                "[Tab] Focus   {keys_text}   [Esc] Detach   [q] Quit"
+                "[Tab] Focus   [T] Tabs   {keys_text}   [Esc] Detach   [q] Quit"
             ))
             .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
@@ -1129,8 +1138,7 @@ mod tests {
         assert!(app.library.songs.is_empty());
         wait_for_library(&mut app);
 
-        app.key(KeyCode::Tab);
-        app.key(KeyCode::Tab);
+        app.key(KeyCode::Char('T'));
         app.key(KeyCode::Down);
         app.key(KeyCode::Enter);
         assert!(app.page == Page::Scanned);
@@ -1140,8 +1148,8 @@ mod tests {
         app.key(KeyCode::Enter);
         assert_eq!(app.library.songs[0].title, "First");
         assert_eq!(app.library.songs.len(), 1);
-        for _ in 0..3 {
-            app.key(KeyCode::Tab);
+        for _ in FACETS {
+            app.key(KeyCode::Char('f'));
         }
         assert!(app.focus == Focus::Main);
         assert_eq!(app.songs().0.len(), 1);
@@ -1429,6 +1437,32 @@ mod tests {
         let mut app = App::new(Some(".".into()), Vec::new(), None);
         assert!(!app.key(KeyCode::Enter));
         assert!(app.connection.is_none());
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Playback);
+    }
+
+    #[test]
+    fn tab_switches_between_main_and_playback_and_leaves_tabs() {
+        let mut app = App::new(None, Vec::new(), None);
+        for focus in [Focus::Main, Focus::Playback] {
+            app.focus = focus;
+            app.key(KeyCode::Char('t'));
+            assert!(app.focus == focus);
+            app.key(KeyCode::Char('T'));
+            assert!(app.focus == Focus::Sidebar);
+            app.key(KeyCode::Down);
+            let page = app.page;
+            app.key(KeyCode::Tab);
+            assert!(app.focus == Focus::Main);
+            assert!(app.page == page);
+            app.key(KeyCode::Tab);
+            assert!(app.focus == Focus::Playback);
+            app.key(KeyCode::Tab);
+            assert!(app.focus == Focus::Main);
+        }
+        app.page = Page::Scanned;
+        app.key(KeyCode::Char('f'));
+        assert!(app.focus == Focus::Filter(0));
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Playback);
     }

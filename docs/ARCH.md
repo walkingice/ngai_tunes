@@ -130,7 +130,9 @@ vary with the terminal size.
 | Info | Status messages and errors from scanning, connecting or playing audio. | Display only. |
 | Hotkey | Keys available in the current focus or modal, with their actions. For example, Enter means play selection in Main and stop in Playback while playing. | Display only. |
 
-Tab cycles focus from Sidebar to Main to Playback and back to Sidebar.
+Tab switches focus between Main and Playback. Uppercase `T` focuses the
+Sidebar, where Tab returns focus to Main. In Scanned, `f` cycles focus
+through the filters and the song list within Main.
 Route Esc and q according to the [SPEC](../AGENTS.md). While the quit
 confirmation is open, route input to the modal. Restore terminal modes
 on exit and error.
