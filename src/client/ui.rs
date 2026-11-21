@@ -237,15 +237,25 @@ impl App {
             KeyCode::Enter if self.focus == Focus::Main => self.play_selection(),
             KeyCode::Enter if self.focus == Focus::Sidebar => self.focus = Focus::Main,
             KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
-            _ if self.focus == Focus::Playback => self.playback_key(key),
-            _ => {}
+            _ => {
+                if let Some(command) = self.playback_command(key) {
+                    self.send(command);
+                }
+            }
         }
         false
     }
 
-    fn playback_key(&mut self, key: KeyCode) {
-        let Some(state) = &self.snapshot else { return };
-        let command = match key {
+    fn playback_command(&self, key: KeyCode) -> Option<Command> {
+        let state = self.snapshot.as_ref()?;
+        let playing_tab_seek = self.focus == Focus::Main
+            && state.current.is_some()
+            && matches!(state.status, Status::Playing | Status::Pausing)
+            && matches!(key, KeyCode::Left | KeyCode::Right);
+        if self.focus != Focus::Playback && !playing_tab_seek {
+            return None;
+        }
+        Some(match key {
             KeyCode::Enter if state.status == Status::Stopping => Command::Restart,
             KeyCode::Enter => Command::Stop,
             KeyCode::Char('n') => Command::Next,
@@ -265,9 +275,8 @@ impl App {
             KeyCode::Right => Command::Seek {
                 position_ms: self.position().saturating_add(5000),
             },
-            _ => return,
-        };
-        self.send(command);
+            _ => return None,
+        })
     }
 
     fn position(&self) -> u64 {
@@ -318,7 +327,7 @@ impl App {
         );
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
-            Focus::Main => "[↑/↓] Select   [Enter] Play   [Space] Pause/Resume",
+            Focus::Main => "[↑/↓] Select   [Enter] Play   [←/→] Seek   [Space] Pause/Resume",
             Focus::Playback
                 if self
                     .snapshot
@@ -479,5 +488,37 @@ mod tests {
         assert!(app.confirm);
         assert!(!app.key(KeyCode::Esc));
         assert!(!app.confirm);
+    }
+
+    #[test]
+    fn playing_tab_seeks_only_with_an_active_track() {
+        let mut app = App::new(None, Vec::new(), None);
+        assert!(app.playback_command(KeyCode::Right).is_none());
+        app.snapshot = Some(Snapshot {
+            revision: 0,
+            queue: Vec::new(),
+            current: Some(0),
+            status: Status::Pausing,
+            position_ms: 3000,
+            duration_ms: None,
+            repeat: Repeat::Off,
+            order: Order::Sequential,
+            error: None,
+        });
+        assert!(matches!(
+            app.playback_command(KeyCode::Left),
+            Some(Command::Seek { position_ms: 0 })
+        ));
+        assert!(matches!(
+            app.playback_command(KeyCode::Right),
+            Some(Command::Seek { position_ms: 8000 })
+        ));
+        app.snapshot.as_mut().unwrap().status = Status::Playing;
+        assert!(matches!(
+            app.playback_command(KeyCode::Right),
+            Some(Command::Seek { .. })
+        ));
+        app.snapshot.as_mut().unwrap().status = Status::Stopping;
+        assert!(app.playback_command(KeyCode::Right).is_none());
     }
 }

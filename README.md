@@ -31,6 +31,7 @@ start playback. Space pauses or resumes. Esc detaches and asks a manually stoppe
 Press q to exit. If a track is playing, confirm to stop playback and exit.
 With repeat off, the daemon exits when it reaches the end of the queue.
 
+In Playing, Left/Right seek by five seconds while playing or paused.
 Use Tab to focus Playback. Enter stops or restarts the retained track.
 N/P move to the next or previous track, Left/Right seek by five seconds,
 R cycles repeat, and O toggles sequential or random order. Repeat-one
