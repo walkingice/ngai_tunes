@@ -44,10 +44,11 @@ exits at the end of the cycle, and repeat-all starts a new shuffle.
 
 Press uppercase `T` to focus Tabs, then Up/Down to select Settings and Enter
 to open it. Press Tab from Tabs to return to Main.
-In Scanned, press `f` to cycle through the filters and the song list.
 Select a directory path to edit it, or select its Delete button to confirm
 removal. Add directory creates a target. The Scan button asks for confirmation; scanning is not implemented yet.
 Targets are saved in `config.json` under `scan_directories`.
+
+In Scanned, Tab cycles from the song list through the filters and Playback.
 
 See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
 

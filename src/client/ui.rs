@@ -424,16 +424,10 @@ impl App {
                 return true;
             }
             KeyCode::Char('T') => self.focus = Focus::Sidebar,
-            KeyCode::Char('f') if self.page == Page::Scanned => {
-                self.focus = match self.focus {
-                    Focus::Main => Focus::Filter(0),
-                    Focus::Filter(index) if index + 1 < FACETS.len() => Focus::Filter(index + 1),
-                    Focus::Filter(_) => Focus::Main,
-                    focus => focus,
-                }
-            }
             KeyCode::Tab => {
                 self.focus = match self.focus {
+                    Focus::Main if self.page == Page::Scanned => Focus::Filter(0),
+                    Focus::Filter(index) if index + 1 < FACETS.len() => Focus::Filter(index + 1),
                     Focus::Main | Focus::Filter(_) => Focus::Playback,
                     Focus::Sidebar | Focus::Playback => Focus::Main,
                 }
@@ -578,10 +572,7 @@ impl App {
         }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
-            Focus::Filter(_) => "[f] Next section   [↑/↓] Move   [Enter] Filter",
-            Focus::Main if self.page == Page::Scanned => {
-                "[f] Filters   [↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸"
-            }
+            Focus::Filter(_) => "[↑/↓] Move   [Enter] Filter",
             Focus::Main if self.page == Page::Scan => "[↑/↓] Select   [Enter] Activate",
             Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
             Focus::Playback
@@ -1149,8 +1140,10 @@ mod tests {
         assert_eq!(app.library.songs[0].title, "First");
         assert_eq!(app.library.songs.len(), 1);
         for _ in FACETS {
-            app.key(KeyCode::Char('f'));
+            app.key(KeyCode::Tab);
         }
+        assert!(app.focus == Focus::Playback);
+        app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Main);
         assert_eq!(app.songs().0.len(), 1);
 
@@ -1455,6 +1448,7 @@ mod tests {
             app.key(KeyCode::Tab);
             assert!(app.focus == Focus::Main);
             assert!(app.page == page);
+            app.page = Page::Playing;
             app.key(KeyCode::Tab);
             assert!(app.focus == Focus::Playback);
             app.key(KeyCode::Tab);
@@ -1462,9 +1456,15 @@ mod tests {
         }
         app.page = Page::Scanned;
         app.key(KeyCode::Char('f'));
-        assert!(app.focus == Focus::Filter(0));
+        assert!(app.focus == Focus::Main);
+        for index in 0..FACETS.len() {
+            app.key(KeyCode::Tab);
+            assert!(app.focus == Focus::Filter(index));
+        }
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Playback);
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Main);
     }
 
     #[test]
