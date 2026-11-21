@@ -115,12 +115,15 @@ vary with the terminal size.
 +-----------------------------------------------+
 ```
 
-Use a Sidebar (Playing tab), Main list, Playback panel with progress,
-Info line for errors and contextual Hotkey line. Tab cycles focus between
-Sidebar, Main and Playback. Distinguish the cursor from the playing entry.
-Show the source directory or daemon queue as the list heading.
+| Region | What it shows | Interaction |
+| --- | --- | --- |
+| Sidebar | Available tabs and the active tab. Playing is the only tab in the first release. | Selecting a tab chooses the view in Main. |
+| Main | In scan mode, the directory and its local track list. In attach mode, the daemon queue. Mark the cursor and the playing track independently whenever both are visible. | Up/Down moves the cursor locally. Enter plays the displayed list from the selected entry. Space controls the live session even if the cursor is on another track. |
+| Playback | The daemon's current track, status, elapsed time, a progress bar when duration is known, repeat mode and playback order. Clear live indicators on disconnect. | Space pauses or resumes. Enter stops or restarts the retained track. N/P select next/previous and R cycles repeat. Seek and order controls also belong here. |
+| Info | Status messages and errors from scanning, connecting or playing audio. | Display only. |
+| Hotkey | Keys available in the current focus or modal, with their actions. For example, Enter means play selection in Main and stop in Playback while playing. | Display only. |
 
-Arrow keys move the Main cursor. Enter depends on focus as defined in the
-SPEC. In Playback, N/P select next/previous and R cycles repeat. Expose
-seek and order controls and show their bindings in the Hotkey line. Route
-q through confirmation. Restore terminal modes on exit and error.
+Tab cycles focus from Sidebar to Main to Playback and back to Sidebar.
+Route Esc and q according to the [SPEC](../AGENTS.md). While the quit
+confirmation is open, route input to the modal. Restore terminal modes
+on exit and error.
