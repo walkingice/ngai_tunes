@@ -41,6 +41,10 @@ impl ConfigStore {
         ))
     }
 
+    pub fn database(&self) -> super::database::Database {
+        super::database::Database::new(self.path.with_file_name("database.jsonl"))
+    }
+
     pub fn load(&self) -> io::Result<Config> {
         match fs::read(&self.path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),

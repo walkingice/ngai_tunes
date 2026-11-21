@@ -122,7 +122,7 @@ pub fn read_frame(reader: &mut impl std::io::BufRead) -> std::io::Result<Option<
     Ok(Some(data))
 }
 
-mod unix_path {
+pub(crate) mod unix_path {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::{
         ffi::OsString,
