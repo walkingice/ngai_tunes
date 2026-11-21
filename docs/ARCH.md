@@ -54,18 +54,25 @@ clear live playback indicators and allow Main Enter to reconnect.
 Use newline-delimited UTF-8 JSON. Each request has a version, request_id
 and command. Reply with the same ID and success or an error code/message.
 Handle partial lines, multiple lines per read, unsupported versions and
-malformed input. Enforce a frame size limit on both ends and report an
-oversized queue without partially replacing the current queue.
+malformed input. Enforce the 1 MiB frame limit on both ends.
 
-- Main Enter sends one replace-and-play request with ordered paths,
-  metadata and the selected index. Validate the entire request before
-  changing state. Serialize it with commands from other clients.
+- Main Enter uploads the ordered paths and metadata in numbered segments
+  with the same request ID. Each segment includes the total segment count
+  and its one-based index. Pack up to 100 tracks per segment and shrink
+  segments as needed to fit the frame limit. Only the first segment
+  includes the selected index in the full queue.
+- Stage uploads per connection. Acknowledge a successful replacement after
+  all segments arrive and the full queue is validated. Invalid or interrupted
+  uploads leave the active queue in place.
 - Provide subscribe/get-state, pause/resume, stop, restart, seek,
   next/previous, set-repeat, set-order, quit and exit_on_stopping.
-- Subscribe before obtaining a snapshot. Include a monotonic revision,
-  queue entry identifiers, current entry, status, duration if known,
-  confirmed position and playback modes. Discard older events within the same connection. Reset the revision
-  baseline on reconnect.
+- Subscribe before obtaining a snapshot. Send the queue in numbered
+  segments when a connection first sees its queue revision. Send the snapshot
+  after those segments with the queue revision, a monotonic state revision,
+  current entry, status, duration if known, confirmed position and playback
+  modes. The client assembles the complete queue before applying the snapshot.
+  Later state changes reuse the cached queue for that revision. Reset both
+  revision baselines on reconnect.
 - Animate progress locally between updates while Playing. Resync on seek,
   pause and track change. Use bounded per-client output queues so a slow
   reader cannot stall playback. On connection loss after sending a command,

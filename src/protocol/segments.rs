@@ -107,3 +107,54 @@ impl QueueTransfer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{Command, MAX_FRAME, Request, encode_upload};
+
+    fn track(title: String) -> Track {
+        Track {
+            path: "/song.mp3".into(),
+            title,
+            artist: None,
+            album: None,
+            track_number: None,
+            duration_ms: None,
+            genre: None,
+        }
+    }
+
+    #[test]
+    fn upload_has_numbered_segments_and_first_selection() {
+        let tracks = vec![track("Song".into()); 235];
+        let frames = encode_upload(45, &tracks, 234).unwrap();
+        let mut receiver = QueueTransfer::default();
+        for (index, frame) in frames.into_iter().enumerate() {
+            let request: Request = serde_json::from_slice(&frame).unwrap();
+            assert_eq!(request.request_id, 45);
+            let Command::UploadQueue { segment, selected } = request.command else {
+                panic!("Expected a queue upload");
+            };
+            assert_eq!(segment.total_segments, 3);
+            assert_eq!(segment.segment_index, index + 1);
+            assert_eq!(segment.tracks.len(), [100, 100, 35][index]);
+            assert_eq!(selected, (index == 0).then_some(234));
+            let queue = receiver.push(45, segment).unwrap();
+            assert_eq!(queue.as_deref(), (index == 2).then_some(tracks.as_slice()));
+        }
+    }
+
+    #[test]
+    fn shrinks_segments_and_rejects_tracks_that_cannot_fit() {
+        let tracks = vec![track("x".repeat(MAX_FRAME / 3)); 5];
+        let frames = encode_upload(1, &tracks, 0).unwrap();
+        assert!(frames.len() > 1);
+        assert!(frames.iter().all(|frame| frame.len() <= MAX_FRAME));
+        let oversized = [track("x".repeat(MAX_FRAME))];
+        assert_eq!(
+            encode_upload(1, &oversized, 0).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+}

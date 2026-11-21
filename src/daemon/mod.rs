@@ -431,6 +431,29 @@ mod tests {
         }
     }
 
+    fn test_peer(socket: &Path) -> TestPeer {
+        let stream = UnixStream::connect(socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        TestPeer {
+            stream: BufReader::new(stream),
+            incoming: IncomingState::default(),
+        }
+    }
+
+    fn track(title: String) -> Track {
+        Track {
+            path: "/test.mp3".into(),
+            title,
+            artist: None,
+            album: None,
+            track_number: None,
+            duration_ms: None,
+            genre: None,
+        }
+    }
+
     #[test]
     fn two_clients_share_state_and_quit_is_acknowledged() {
         let root = tempfile::tempdir().unwrap();
@@ -438,31 +461,14 @@ mod tests {
         let runtime = Runtime::bind(&directory).unwrap();
         let socket = directory.join("daemon.sock");
         let server = thread::spawn(move || serve(runtime, Silent).unwrap());
-        let peer = || {
-            let stream = UnixStream::connect(&socket).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            TestPeer {
-                stream: BufReader::new(stream),
-                incoming: IncomingState::default(),
-            }
-        };
+        let peer = || test_peer(&socket);
         let mut first = peer();
         let mut second = peer();
         first.request(1, Command::Subscribe);
         second.request(1, Command::Subscribe);
         first.write(b"{bad json}\n");
         assert_eq!(first.read().error.unwrap().code, "malformed");
-        let track = Track {
-            path: "/test.mp3".into(),
-            title: "Test".into(),
-            artist: None,
-            album: None,
-            track_number: None,
-            duration_ms: None,
-            genre: None,
-        };
+        let track = track("Test".into());
         for frame in encode_upload(2, &[track], 0).unwrap() {
             first.write(&frame);
         }
@@ -479,5 +485,55 @@ mod tests {
         second.request(4, Command::Quit);
         server.join().unwrap();
         assert!(!socket.exists());
+    }
+    #[test]
+    fn large_queue_is_atomic_and_shared_with_new_subscribers() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("run");
+        let runtime = Runtime::bind(&directory).unwrap();
+        let socket = directory.join("daemon.sock");
+        let server = thread::spawn(move || serve(runtime, Silent).unwrap());
+        let mut observer = test_peer(&socket);
+        observer.request(1, Command::Subscribe);
+        let mut uploader = test_peer(&socket);
+        let initial = encode_upload(1, &[track("Initial".into())], 0).unwrap();
+        uploader.write(&initial[0]);
+        assert!(uploader.reply(1).error.is_none());
+
+        let queue: Vec<_> = (0..205)
+            .map(|index| track(format!("{index} {}", "x".repeat(6000))))
+            .collect();
+        assert!(serde_json::to_vec(&queue).unwrap().len() > crate::protocol::MAX_FRAME);
+        let frames = encode_upload(2, &queue, 204).unwrap();
+        assert_eq!(frames.len(), 3);
+        uploader.stream.get_mut().write_all(&frames[0]).unwrap();
+        let previous = uploader.request(3, Command::GetState).state.unwrap();
+        assert_eq!(previous.queue[0].title, "Initial");
+
+        uploader.stream.get_mut().write_all(&frames[2]).unwrap();
+        assert_eq!(uploader.reply(2).error.unwrap().code, "invalid_segment");
+        drop(uploader);
+        let previous = observer.request(2, Command::GetState).state.unwrap();
+        assert_eq!(previous.queue[0].title, "Initial");
+
+        let mut uploader = test_peer(&socket);
+        for frame in frames {
+            uploader.stream.get_mut().write_all(&frame).unwrap();
+        }
+        assert!(uploader.reply(2).error.is_none());
+        let broadcast = observer.read().state.unwrap();
+        assert_eq!(*broadcast.queue, queue);
+        assert_eq!(broadcast.current, Some(204));
+
+        let mut attached = test_peer(&socket);
+        let snapshot = attached.request(1, Command::Subscribe).state.unwrap();
+        assert_eq!(*snapshot.queue, queue);
+        assert_eq!(snapshot.current, Some(204));
+        attached.request(2, Command::SetRepeat(Repeat::One));
+        let updated = attached.read().state.unwrap();
+        assert_eq!(updated.repeat, Repeat::One);
+        assert!(Arc::ptr_eq(&snapshot.queue, &updated.queue));
+        attached.request(3, Command::Quit);
+        server.join().unwrap();
     }
 }
