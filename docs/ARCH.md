@@ -87,6 +87,34 @@ Report device failure separately and retain the selection for retry.
 
 ## TUI
 
+The diagram shows the arrangement of the panels. Their dimensions can
+vary with the terminal size.
+
+```text
++--------+--------------------------------------+
+|        |                                      |
+|        |                                      |
+|        |                                      |
+|        |                                      |
+|  Side  |              Main                    |
+|  Bar   |                                      |
+|        |                                      |
+|        |                                      |
+|        |                                      |
+|        |                                      |
+|        |                                      |
+|        |                                      |
++--------+--------------------------------------+
+|                                               |
+|                    Playback                   |
+|                                               |
++-----------------------------------------------+
+|                      Info                     |
++-----------------------------------------------+
+|                     Hotkey                    |
++-----------------------------------------------+
+```
+
 Use a Sidebar (Playing tab), Main list, Playback panel with progress,
 Info line for errors and contextual Hotkey line. Tab cycles focus between
 Sidebar, Main and Playback. Distinguish the cursor from the playing entry.
