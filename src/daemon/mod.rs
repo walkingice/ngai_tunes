@@ -58,8 +58,7 @@ struct Peer {
     stream: UnixStream,
     subscribed: bool,
     queue_revision: Option<u64>,
-    upload: QueueTransfer,
-    selection: Option<usize>,
+    upload: Option<PendingUpload>,
     graceful: bool,
 }
 
@@ -97,6 +96,11 @@ impl QueueFrames {
     }
 }
 
+struct PendingUpload {
+    transfer: QueueTransfer,
+    selected: usize,
+}
+
 impl Peer {
     fn upload(
         &mut self,
@@ -104,19 +108,21 @@ impl Peer {
         segment: QueueSegment,
         selected: Option<usize>,
     ) -> Result<Option<(Vec<Track>, usize)>, &'static str> {
-        if (segment.segment_index == 1) != selected.is_some() {
-            self.upload = QueueTransfer::default();
-            self.selection = None;
-            return Err("Queue selection must be on the first segment");
-        }
-        if let Some(selected) = selected {
-            self.selection = Some(selected);
-        }
-        let Some(queue) = self.upload.push(id, segment)? else {
-            return Ok(None);
+        let previous = self.upload.take();
+        let mut upload = match (segment.segment_index == 1, selected) {
+            (true, Some(selected)) => PendingUpload {
+                transfer: QueueTransfer::default(),
+                selected,
+            },
+            (false, None) => previous.ok_or("Invalid queue segment sequence")?,
+            _ => return Err("Queue selection must be on the first segment"),
         };
-        let selected = self.selection.take().ok_or("Missing queue selection")?;
-        Ok(Some((queue, selected)))
+        if let Some(queue) = upload.transfer.push(id, segment)? {
+            Ok(Some((queue, upload.selected)))
+        } else {
+            self.upload = Some(upload);
+            Ok(None)
+        }
     }
 }
 
@@ -350,8 +356,7 @@ fn connect_peer(id: u64, stream: UnixStream, input: SyncSender<Input>) -> io::Re
         stream,
         subscribed: false,
         queue_revision: None,
-        upload: QueueTransfer::default(),
-        selection: None,
+        upload: None,
         graceful: false,
     })
 }
@@ -491,6 +496,42 @@ mod tests {
             stream: BufReader::new(stream),
             incoming: IncomingState::default(),
         }
+    }
+
+    #[test]
+    fn upload_selection_follows_the_active_transfer() {
+        let (stream, _client) = UnixStream::pair().unwrap();
+        let (output, _frames) = mpsc::sync_channel(1);
+        let mut peer = Peer {
+            output,
+            stream,
+            subscribed: false,
+            queue_revision: None,
+            upload: None,
+            graceful: false,
+        };
+        let segment = |segment_index, total_segments| QueueSegment {
+            segment_index,
+            total_segments,
+            tracks: vec![track(format!("Track {segment_index}"))],
+        };
+
+        assert!(peer.upload(1, segment(1, 2), Some(0)).unwrap().is_none());
+        assert!(peer.upload(1, segment(1, 2), Some(1)).unwrap().is_none());
+        let (queue, selected) = peer.upload(1, segment(2, 2), None).unwrap().unwrap();
+        assert_eq!(queue.len(), 2);
+        assert_eq!(selected, 1);
+
+        assert!(peer.upload(2, segment(1, 2), Some(1)).unwrap().is_none());
+        for id in [3, 2] {
+            assert_eq!(
+                peer.upload(id, segment(2, 2), None).unwrap_err(),
+                "Invalid queue segment sequence"
+            );
+        }
+        let (queue, selected) = peer.upload(3, segment(1, 1), Some(0)).unwrap().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(selected, 0);
     }
 
     fn track(title: String) -> Track {
