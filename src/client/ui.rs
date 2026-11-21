@@ -301,7 +301,7 @@ impl App {
             Constraint::Min(3),
             Constraint::Length(5),
             Constraint::Length(3),
-            Constraint::Length(4),
+            Constraint::Length(3),
         ])
         .areas(frame.area());
         let [sidebar, main] =
