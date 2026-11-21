@@ -16,12 +16,13 @@ cargo build --release
 ## Usage
 
 ```sh
-./target/release/ngai_tunes               # Scan the working directory
+./target/release/ngai_tunes               # Attach to the running queue
+./target/release/ngai_tunes .             # Scan the working directory
 ./target/release/ngai_tunes ~/Music/Jazz  # Scan one directory
-./target/release/ngai_tunes attach        # Open the running queue
 ```
 
-In the Main list, select a track with the arrow keys and press Enter to
+If no daemon is running, the no-argument command reports that and exits.
+To start a session, pass a directory. In the Main list, select a track with the arrow keys and press Enter to
 start playback. Space pauses or resumes. Esc detaches and asks a manually stopped daemon to exit.
 Press q and confirm to stop playback and exit. With repeat off, the daemon
 exits when it reaches the end of the queue.

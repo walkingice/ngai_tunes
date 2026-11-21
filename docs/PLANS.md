@@ -8,7 +8,8 @@ the working increment. Record actual platform test results in the handoff.
 ## 1. Create the executable and scanner
 
 Create a Cargo binary named ngai_tunes and client, daemon, playback and
-protocol modules. Dispatch no argument, directory, attach and daemon modes.
+protocol modules. Test CLI dispatch: no arguments and `attach` select attach mode,
+`.` and other directory paths select scan mode, and `daemon` runs the server.
 Scan only immediate regular music files, accepting MP3/FLAC extensions
 case-insensitively. Sort by filename, extract tags and keep a playable entry
 when tags are missing. Distinguish an unreadable directory from an empty one.
@@ -71,7 +72,9 @@ from session snapshots. Implement focus-specific Enter, Space, Esc, q and
 the confirmation modal. Disable Main Enter on an empty list. Space still controls live playback. Preserve
 the screen's list and cursor when the daemon exits.
 
-Start Jazz, detach, then open a Rock directory. Verify Space controls Jazz
+With no daemon, verify a bare launch reports that and exits. Start Jazz,
+detach, then run `ngai_tunes` from Rock and verify it shows Jazz.
+Run `ngai_tunes .` from Rock and verify the Main list shows Rock. Verify Space controls Jazz
 and Main Enter replaces it with Rock. Verify attach shows the live queue.
 Exercise manual stop/restart, cancel/confirm quit and terminal restoration.
 

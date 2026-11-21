@@ -5,7 +5,9 @@ when choosing crates or changing the thread model.
 
 ## Processes and ownership
 
-Dispatch the single executable into scan client, attach client, or daemon.
+Dispatch an empty argument list and the `attach` subcommand to the same
+attach client. A directory argument selects the scan client, with `.`
+resolved against the client’s working directory.
 Support a foreground daemon mode for debugging and a private detached child
 mode for the launcher. Keep CLI parsing separate from IPC types.
 
