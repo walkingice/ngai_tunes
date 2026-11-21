@@ -15,6 +15,84 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Level {
+    Info,
+    Warning,
+    Error,
+}
+
+impl Level {
+    fn color(self) -> Color {
+        match self {
+            Self::Info => Color::Reset,
+            Self::Warning => Color::Yellow,
+            Self::Error => Color::Red,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct NoticeConfig {
+    info_seconds: u64,
+    warning_seconds: u64,
+    error_seconds: u64,
+}
+
+impl Default for NoticeConfig {
+    fn default() -> Self {
+        Self {
+            info_seconds: 5,
+            warning_seconds: 5,
+            error_seconds: 10,
+        }
+    }
+}
+
+impl NoticeConfig {
+    fn load() -> Self {
+        let Some(home) = std::env::var_os("HOME") else {
+            return Self::default();
+        };
+        let path = PathBuf::from(home).join(".config/ngai_tunes/config.json");
+        match std::fs::read_to_string(path) {
+            Ok(contents) => match serde_json::from_str(&contents) {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("Invalid config: {error}");
+                    Self::default()
+                }
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Self::default(),
+            Err(error) => {
+                eprintln!("Could not read config: {error}");
+                Self::default()
+            }
+        }
+    }
+
+    fn duration(&self, level: Level) -> Duration {
+        Duration::from_secs(match level {
+            Level::Info => self.info_seconds,
+            Level::Warning => self.warning_seconds,
+            Level::Error => self.error_seconds,
+        })
+    }
+}
+
+struct Notice {
+    text: String,
+    level: Level,
+    created: Instant,
+}
+
+impl Notice {
+    fn visible(&self, config: &NoticeConfig) -> bool {
+        self.created.elapsed() < config.duration(self.level)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Focus {
     Sidebar,
@@ -30,7 +108,8 @@ pub struct App {
     connection: Option<Connection>,
     snapshot: Option<Snapshot>,
     updated: Instant,
-    info: String,
+    info: Option<Notice>,
+    notice_config: NoticeConfig,
     confirm: bool,
     initialized: bool,
     pending: Option<u64>,
@@ -42,12 +121,7 @@ impl App {
         tracks: Vec<Track>,
         connection: Option<Connection>,
     ) -> Self {
-        let info = if source.is_some() {
-            format!("{} tracks found", tracks.len())
-        } else {
-            String::new()
-        };
-        Self {
+        let mut app = Self {
             source,
             tracks,
             cursor: 0,
@@ -55,11 +129,16 @@ impl App {
             connection,
             snapshot: None,
             updated: Instant::now(),
-            info,
+            info: None,
+            notice_config: NoticeConfig::load(),
             confirm: false,
             initialized: false,
             pending: None,
+        };
+        if app.source.is_some() {
+            app.show_notice(Level::Info, format!("{} tracks found", app.tracks.len()));
         }
+        app
     }
 
     pub fn run(&mut self) -> io::Result<()> {
@@ -70,6 +149,14 @@ impl App {
         result.and(restored)
     }
 
+    fn show_notice(&mut self, level: Level, text: impl Into<String>) {
+        self.info = Some(Notice {
+            text: text.into(),
+            level,
+            created: Instant::now(),
+        });
+    }
+
     fn initialize(&mut self) {
         if self.source.is_some() {
             return;
@@ -78,7 +165,7 @@ impl App {
             self.receive(message);
         } else {
             self.connection = None;
-            self.info = "No daemon available to attach".into();
+            self.show_notice(Level::Warning, "No daemon available to attach");
         }
     }
 
@@ -101,7 +188,7 @@ impl App {
             self.pending = None;
         }
         if let Some(error) = message.error {
-            self.info = error.message;
+            self.show_notice(Level::Error, error.message);
         }
         let Some(state) = message.state else { return };
         if self
@@ -118,8 +205,10 @@ impl App {
             self.tracks.clone_from(&state.queue);
             self.cursor = self.cursor.min(self.tracks.len().saturating_sub(1));
         }
-        if let Some(error) = &state.error {
-            self.info.clone_from(error);
+        if let Some(error) = &state.error
+            && self.snapshot.as_ref().and_then(|old| old.error.as_ref()) != Some(error)
+        {
+            self.show_notice(Level::Error, error.clone());
         }
         self.initialized = true;
         self.updated = Instant::now();
@@ -149,14 +238,14 @@ impl App {
             .as_ref()
             .is_none_or(|state| state.error.is_none())
         {
-            self.info = "Daemon disconnected".into();
+            self.show_notice(Level::Warning, "Daemon disconnected");
         }
         self.snapshot = None;
     }
 
     fn send(&mut self, command: Command) {
         let Some(connection) = &mut self.connection else {
-            self.info = "No daemon is reachable".into();
+            self.show_notice(Level::Warning, "No daemon is reachable");
             return;
         };
         match connection.send(command) {
@@ -167,7 +256,7 @@ impl App {
                     self.pending = None;
                     self.connection = Connection::connect().ok();
                 }
-                self.info = error.to_string();
+                self.show_notice(Level::Error, error.to_string());
             }
         }
     }
@@ -186,7 +275,7 @@ impl App {
                     selected: self.cursor,
                 });
             }
-            Err(error) => self.info = error.to_string(),
+            Err(error) => self.show_notice(Level::Error, error.to_string()),
         }
     }
 
@@ -310,7 +399,7 @@ impl App {
         let [top, playback, info, keys] = Layout::vertical([
             Constraint::Min(3),
             Constraint::Length(5),
-            Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Length(1),
         ])
         .areas(frame.area());
@@ -322,10 +411,18 @@ impl App {
         );
         self.render_list(frame, main);
         self.render_playback(frame, playback);
-        frame.render_widget(
-            Paragraph::new(self.info.as_str()).block(Block::bordered().title("Info")),
-            info,
-        );
+        if let Some(notice) = self
+            .info
+            .as_ref()
+            .filter(|notice| notice.visible(&self.notice_config))
+        {
+            frame.render_widget(
+                Paragraph::new(notice.text.as_str())
+                    .right_aligned()
+                    .style(notice.level.color()),
+                info,
+            );
+        }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
             Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
@@ -480,13 +577,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn notices_use_configured_durations_and_colors() {
+        let config: NoticeConfig =
+            serde_json::from_str(r#"{"info_seconds":1,"warning_seconds":2,"error_seconds":3}"#)
+                .unwrap();
+        for (level, seconds, color) in [
+            (Level::Info, 1, Color::Reset),
+            (Level::Warning, 2, Color::Yellow),
+            (Level::Error, 3, Color::Red),
+        ] {
+            let notice = Notice {
+                text: "test".into(),
+                level,
+                created: Instant::now(),
+            };
+            assert!(notice.visible(&config));
+            assert!(
+                !Notice {
+                    created: Instant::now() - Duration::from_secs(seconds),
+                    ..notice
+                }
+                .visible(&config)
+            );
+            assert_eq!(level.color(), color);
+        }
+        let defaults: NoticeConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(defaults.duration(Level::Info), Duration::from_secs(5));
+        assert_eq!(defaults.duration(Level::Warning), Duration::from_secs(5));
+        assert_eq!(defaults.duration(Level::Error), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn repeated_snapshot_error_does_not_refresh_notice() {
+        let mut app = App::new(None, Vec::new(), None);
+        let state = Snapshot {
+            revision: 1,
+            queue: Vec::new(),
+            current: None,
+            status: Status::Stopping,
+            position_ms: 0,
+            duration_ms: None,
+            repeat: Repeat::Off,
+            order: Order::Sequential,
+            error: Some("Broken".into()),
+        };
+        app.snapshot = Some(state.clone());
+        app.receive(Message {
+            request_id: None,
+            error: None,
+            state: Some(state),
+        });
+        assert!(app.info.is_none());
+    }
+
+    #[test]
     fn attach_without_daemon_opens_an_empty_queue_with_a_message() {
         let mut app = App::new(None, Vec::new(), None);
         app.initialize();
         assert!(!app.key(KeyCode::Enter));
         assert!(app.tracks.is_empty());
         assert!(app.connection.is_none());
-        assert_eq!(app.info, "No daemon available to attach");
+        assert_eq!(
+            app.info.as_ref().unwrap().text,
+            "No daemon available to attach"
+        );
     }
 
     #[test]
