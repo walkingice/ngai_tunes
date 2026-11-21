@@ -424,6 +424,8 @@ impl App {
                 return true;
             }
             KeyCode::Char('T') => self.focus = Focus::Sidebar,
+            KeyCode::Char('P') => self.focus = Focus::Playback,
+            KeyCode::Char('S') if self.page != Page::Scan => self.focus = Focus::Main,
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Main if self.page == Page::Scanned => Focus::Filter(0),
@@ -587,9 +589,14 @@ impl App {
                 "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [p/N] Previous   [←/→] Seek   [r] Repeat   [o] Order"
             }
         };
+        let songs_key = if self.page == Page::Scan {
+            ""
+        } else {
+            "   [S] Songs"
+        };
         frame.render_widget(
             Paragraph::new(format!(
-                "[Tab] Focus   [T] Tabs   {keys_text}   [Esc] Detach   [q] Quit"
+                "[Tab] Focus   [T] Tabs   [P] Playback{songs_key}   {keys_text}   [Esc] Detach   [q] Quit"
             ))
             .style(Style::default().fg(Color::DarkGray))
             .wrap(Wrap { trim: true }),
@@ -1465,6 +1472,34 @@ mod tests {
         assert!(app.focus == Focus::Playback);
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Main);
+    }
+
+    #[test]
+    fn uppercase_shortcuts_focus_playback_and_the_visible_song_list() {
+        let mut app = App::new(Some(".".into()), Vec::new(), None);
+        for page in [Page::Playing, Page::Scanned, Page::Browsing] {
+            app.page = page;
+            app.key(KeyCode::Char('T'));
+            app.key(KeyCode::Char('P'));
+            assert!(app.focus == Focus::Playback);
+            app.key(KeyCode::Char('s'));
+            assert!(app.focus == Focus::Playback);
+            app.key(KeyCode::Char('S'));
+            assert!(app.focus == Focus::Main);
+            assert!(app.page == page);
+        }
+
+        app.page = Page::Scanned;
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Filter(0));
+        app.key(KeyCode::Char('S'));
+        assert!(app.focus == Focus::Main);
+
+        app.page = Page::Scan;
+        app.key(KeyCode::Char('P'));
+        app.key(KeyCode::Char('S'));
+        assert!(app.focus == Focus::Playback);
+        assert!(app.page == Page::Scan);
     }
 
     #[test]

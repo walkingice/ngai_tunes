@@ -36,6 +36,8 @@ With repeat off, the daemon exits when it reaches the end of the queue.
 In Playing, Left/Right seek by five seconds while playing or paused.
 Tab switches focus between Main and Playback. Enter in Playback stops or
 restarts the retained track.
+Press uppercase `P` to focus Playback or uppercase `S` to focus the visible
+song list.
 `n` moves to the next track, and `N` or `p` moves to the previous track.
 Left/Right seek by five seconds, R cycles repeat, and O toggles playback order. Repeat-one
 applies to natural endings. Manual next and previous follow play order.
