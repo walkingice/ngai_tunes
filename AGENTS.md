@@ -3,8 +3,7 @@
 ## SPEC
 
 This file defines the user-visible contract for the first release. The
-[architecture](docs/ARCH.md) describes the interfaces and the
-[implementation plan](docs/PLANS.md) gives the build order.
+[architecture](docs/ARCH.md) describes the interfaces.
 
 ### Launch and attach
 

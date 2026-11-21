@@ -37,5 +37,4 @@ applies to natural endings. Manual next and previous follow play order.
 In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
 
-See the [SPEC](AGENTS.md), [architecture](docs/ARCH.md) and
-[implementation plan](docs/PLANS.md).
+See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
