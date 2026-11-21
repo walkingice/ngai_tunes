@@ -22,10 +22,11 @@ This file defines the user-visible contract for the first release. The
   the Playing list with the displayed list, then sends that queue to the daemon
   and plays the focused entry from zero.
   An empty list has no playable selection and does not launch a daemon.
-- With no arguments, `ngai-tunes` attaches to the existing daemon, shows its
-  queue and selects the current track. `ngai-tunes --attach` requests the same
-  behavior. If no daemon is reachable, open the TUI with an empty Playing
-  queue and show a message at the bottom.
+- With no arguments, `ngai-tunes` attaches to the existing daemon, loads its
+  queue into Playing and selects the current track there. `ngai-tunes --attach`
+  requests the same behavior. Open Scanned if the config directory contains
+  `database.jsonl`, and Playing otherwise. If no daemon is reachable, leave the
+  Playing queue empty and show a message at the bottom.
 - Use Unix-style long flags for modes and a positional argument for the
   directory. Accept at most one of `--attach`, `--daemon` and a directory.
 - Multiple clients may share one daemon. Closing a terminal leaves audio

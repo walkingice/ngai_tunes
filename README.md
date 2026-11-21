@@ -24,8 +24,10 @@ cargo build --release
 ./target/release/ngai-tunes --daemon      # Run the daemon in the foreground
 ```
 
-If no daemon is running, launching without arguments or with `--attach` opens
-an empty Playing queue and shows a message at the bottom.
+Passing a directory opens Browsing. Without a directory, the app opens Scanned
+if `database.jsonl` exists in the config directory, and Playing otherwise.
+If no daemon is running, the Playing queue is empty. Launching without a
+directory also shows a message at the bottom in that case.
 To start a session, pass a directory. In the Browsing tab, select a track
 with the arrow keys and press Enter to load the list into Playing and start
 playback. Playing shows the daemon queue and starts empty without a daemon.

@@ -27,6 +27,10 @@ impl Database {
         Self { path }
     }
 
+    pub fn exists(&self) -> bool {
+        self.path.is_file()
+    }
+
     pub fn load(&self) -> io::Result<Vec<ScanTrack>> {
         let file = File::open(&self.path)?;
         BufReader::new(file)

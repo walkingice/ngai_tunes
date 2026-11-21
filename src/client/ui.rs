@@ -212,6 +212,14 @@ impl App {
     }
 
     fn initialize(&mut self) {
+        if self.source.is_none()
+            && self
+                .store
+                .as_ref()
+                .is_some_and(|store| store.database().exists())
+        {
+            self.page = Page::Scanned;
+        }
         if self.source.is_none() && self.connection.is_none() {
             self.show_notice(Level::Warning, "No daemon available to attach");
         }
@@ -1251,6 +1259,33 @@ mod tests {
                 .scan_directories
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn initial_page_prefers_a_directory_then_the_scanned_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.json");
+        let mut app = App::new(None, Vec::new(), None);
+        app.store = Some(ConfigStore::new(config.clone()));
+        app.initialize();
+        assert!(app.page == Page::Playing);
+
+        app.store
+            .as_ref()
+            .unwrap()
+            .database()
+            .stage()
+            .unwrap()
+            .publish()
+            .unwrap();
+        app.initialize();
+        assert!(app.page == Page::Scanned);
+        assert!(app.focus == Focus::Main);
+
+        let mut app = App::new(Some(dir.path().into()), Vec::new(), None);
+        app.store = Some(ConfigStore::new(config));
+        app.initialize();
+        assert!(app.page == Page::Browsing);
     }
 
     #[test]
