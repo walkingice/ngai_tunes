@@ -8,8 +8,7 @@ pub struct Controller<E> {
     engine: E,
     state: Snapshot,
     generation: u64,
-    cycle: Vec<usize>,
-    rng: fastrand::Rng,
+    traversal: Traversal,
     pub shutdown: bool,
 }
 
@@ -29,8 +28,7 @@ impl<E: Engine> Controller<E> {
                 error: None,
             },
             generation: 0,
-            cycle: Vec::new(),
-            rng: fastrand::Rng::new(),
+            traversal: Traversal::default(),
             shutdown: false,
         }
     }
@@ -120,36 +118,17 @@ impl<E: Engine> Controller<E> {
     }
 
     fn reset_cycle(&mut self) {
-        self.cycle = (0..self.state.queue.len()).collect();
-        if self.state.order == Order::Random
-            && let Some(current) = self.state.current
-        {
-            self.cycle.swap(0, current);
-            self.rng.shuffle(&mut self.cycle[1..]);
-        }
+        self.traversal
+            .reset(self.state.queue.len(), self.state.order, self.state.current);
     }
 
     fn adjacent(&mut self, direction: isize) -> Option<usize> {
-        let current = self.state.current?;
-        let offset = self.cycle.iter().position(|&index| index == current)?;
-        if let Some(index) = offset
-            .checked_add_signed(direction)
-            .and_then(|next| self.cycle.get(next))
-        {
-            return Some(*index);
-        }
-        if self.state.repeat != Repeat::All {
-            return None;
-        }
-        if direction > 0 && self.state.order == Order::Random && self.cycle.len() > 1 {
-            self.reset_cycle();
-            self.cycle.rotate_left(1);
-        }
-        if direction > 0 {
-            self.cycle.first().copied()
-        } else {
-            self.cycle.last().copied()
-        }
+        self.traversal.adjacent(
+            self.state.current,
+            self.state.order,
+            self.state.repeat,
+            direction,
+        )
     }
 
     fn try_tracks(&mut self, first: Option<usize>, direction: isize) {
@@ -218,6 +197,53 @@ impl<E: Engine> Controller<E> {
             _ => return,
         }
         self.state.revision += 1;
+    }
+}
+
+#[derive(Default)]
+struct Traversal {
+    cycle: Vec<usize>,
+    rng: fastrand::Rng,
+}
+
+impl Traversal {
+    fn reset(&mut self, len: usize, order: Order, current: Option<usize>) {
+        self.cycle = (0..len).collect();
+        if order == Order::Random
+            && let Some(current) = current
+        {
+            self.cycle.swap(0, current);
+            self.rng.shuffle(&mut self.cycle[1..]);
+        }
+    }
+
+    fn adjacent(
+        &mut self,
+        current: Option<usize>,
+        order: Order,
+        repeat: Repeat,
+        direction: isize,
+    ) -> Option<usize> {
+        let current = current?;
+        let offset = self.cycle.iter().position(|&index| index == current)?;
+        if let Some(index) = offset
+            .checked_add_signed(direction)
+            .and_then(|next| self.cycle.get(next))
+        {
+            return Some(*index);
+        }
+        if repeat != Repeat::All {
+            return None;
+        }
+        if direction > 0 && order == Order::Random && self.cycle.len() > 1 {
+            self.reset(self.cycle.len(), order, Some(current));
+            self.cycle.rotate_left(1);
+        }
+        if direction > 0 {
+            self.cycle.first().copied()
+        } else {
+            self.cycle.last().copied()
+        }
     }
 }
 
@@ -311,20 +337,23 @@ mod tests {
     #[test]
     fn random_previous_retraces_order_and_repeat_one_only_affects_eof() {
         let mut player = Controller::new(Fake::default(), Repeat::Off);
-        player.rng = fastrand::Rng::with_seed(123);
+        player.traversal.rng = fastrand::Rng::with_seed(123);
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(&mut player, &["/one", "/two", "/three"]);
         player.command(Command::SetRepeat(Repeat::One)).unwrap();
         player.command(Command::Next).unwrap();
         let second = player.snapshot().current;
         assert_ne!(second, Some(0));
-        player.engine.event = Some(Event::End(player.generation));
+        let generation = player.generation;
+        player.engine.event = Some(Event::End(generation));
         player.tick();
         assert_eq!(player.snapshot().current, second);
+        assert_eq!(player.generation, generation + 1);
         player.command(Command::Previous).unwrap();
         assert_eq!(player.snapshot().current, Some(0));
         player.command(Command::SetRepeat(Repeat::Off)).unwrap();
         player.command(Command::Next).unwrap();
+        assert_eq!(player.snapshot().current, second);
         player.command(Command::Next).unwrap();
         assert_ne!(player.snapshot().current, second);
         player.engine.event = Some(Event::End(player.generation));
