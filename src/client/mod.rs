@@ -1,4 +1,5 @@
 mod ipc;
+mod recursive_scan;
 mod scan;
 mod ui;
 

@@ -1,14 +1,52 @@
-use crate::protocol::Track;
+use crate::{protocol::Track, storage::database::ScanTrack};
 use lofty::{
     file::{AudioFile, TaggedFileExt},
-    prelude::Accessor,
+    prelude::{Accessor, ItemKey},
+    tag::Tag,
 };
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 pub fn scan(directory: &Path) -> io::Result<Vec<Track>> {
-    let directory = directory.canonicalize()?;
+    let (paths, _) = directory_entries(&directory.canonicalize()?, || Ok(()))?;
+    Ok(paths
+        .into_iter()
+        .map(|path| {
+            read_metadata(path, |tag| {
+                (
+                    tag.and_then(Accessor::artist)
+                        .map(|value| value.into_owned())
+                        .into_iter()
+                        .collect(),
+                    tag.and_then(Accessor::genre)
+                        .map(|value| value.into_owned())
+                        .into_iter()
+                        .collect(),
+                )
+            })
+        })
+        .map(|track| Track {
+            title: track.title,
+            artist: track.artists.into_iter().next(),
+            album: track.album,
+            track_number: track.track_number,
+            duration_ms: track.duration_ms,
+            genre: track.genres.into_iter().next(),
+            path: track.path,
+        })
+        .collect())
+}
+
+pub(super) fn directory_entries(
+    directory: &Path,
+    check: impl Fn() -> io::Result<()>,
+) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut directories = Vec::new();
     let mut paths = Vec::new();
     for entry in fs::read_dir(directory)? {
+        check()?;
         let entry = entry?;
         let path = entry.path();
         let supported = path
@@ -17,15 +55,26 @@ pub fn scan(directory: &Path) -> io::Result<Vec<Track>> {
             .is_some_and(|extension| {
                 extension.eq_ignore_ascii_case("mp3") || extension.eq_ignore_ascii_case("flac")
             });
-        if supported && entry.file_type()?.is_file() {
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            directories.push(path);
+        } else if supported && kind.is_file() {
             paths.push(path);
         }
     }
     paths.sort_unstable();
-    Ok(paths.into_iter().map(read_track).collect())
+    directories.sort_unstable();
+    Ok((paths, directories))
 }
 
-fn read_track(path: std::path::PathBuf) -> Track {
+pub(super) fn read_scan_track(path: PathBuf) -> ScanTrack {
+    read_metadata(path, |tag| tag.map(read_lists).unwrap_or_default())
+}
+
+fn read_metadata(
+    path: PathBuf,
+    lists: impl FnOnce(Option<&Tag>) -> (Vec<String>, Vec<String>),
+) -> ScanTrack {
     let file = lofty::read_from_path(&path).ok();
     let tag = file
         .as_ref()
@@ -40,11 +89,10 @@ fn read_track(path: std::path::PathBuf) -> Track {
                 .to_string_lossy()
                 .into_owned()
         });
-    Track {
+    let (artists, genres) = lists(tag);
+    ScanTrack {
         title,
-        artist: tag
-            .and_then(Accessor::artist)
-            .map(|value| value.into_owned()),
+        artists,
         album: tag
             .and_then(Accessor::album)
             .map(|value| value.into_owned()),
@@ -52,11 +100,23 @@ fn read_track(path: std::path::PathBuf) -> Track {
         duration_ms: file
             .as_ref()
             .map(|file| crate::playback::millis(file.properties().duration())),
-        genre: tag
-            .and_then(Accessor::genre)
-            .map(|value| value.into_owned()),
+        genres,
         path,
     }
+}
+
+fn read_lists(tag: &Tag) -> (Vec<String>, Vec<String>) {
+    let values = |key| {
+        tag.get_strings(&key)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let mut artists = values(ItemKey::TrackArtists);
+    if artists.is_empty() {
+        artists = values(ItemKey::TrackArtist);
+    }
+    (artists, values(ItemKey::Genre))
 }
 
 #[cfg(test)]
