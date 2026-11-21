@@ -1,4 +1,4 @@
-use super::ipc::Connection;
+use super::{ipc::Connection, recursive_scan::Scan};
 use crate::protocol::{Command, Message, Order, Repeat, Snapshot, Status, Track};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
@@ -52,11 +52,11 @@ enum Page {
     Scan,
 }
 
-#[derive(Clone)]
 enum ScanDialog {
     Edit { index: Option<usize>, text: String },
     Delete(usize),
     ConfirmScan,
+    Running(Scan),
 }
 
 struct Notice {
@@ -174,12 +174,19 @@ impl App {
         loop {
             self.poll_connection();
             terminal.draw(|frame| self.render(frame))?;
+            let scan_was_running = matches!(self.scan_dialog, Some(ScanDialog::Running(_)));
             if event::poll(Duration::from_millis(75))?
                 && let Event::Key(key) = event::read()?
                 && key.kind != KeyEventKind::Release
+                && !(scan_was_running
+                    && key.kind == KeyEventKind::Repeat
+                    && key.code == KeyCode::Enter)
                 && self.key(key.code)
             {
                 return Ok(());
+            }
+            if scan_was_running {
+                self.poll_scan();
             }
         }
     }
@@ -537,8 +544,9 @@ impl App {
             }
             (ScanDialog::Delete(_), KeyCode::Char('n'))
             | (ScanDialog::ConfirmScan, KeyCode::Char('n')) => return,
+            (ScanDialog::Running(_), KeyCode::Enter | KeyCode::Char('n')) => return,
             (ScanDialog::ConfirmScan, KeyCode::Enter | KeyCode::Char('y')) => {
-                self.show_notice(Level::Info, "Scanning is not implemented yet");
+                self.start_scan();
                 return;
             }
             (ScanDialog::Edit { index, text }, KeyCode::Enter) if !text.trim().is_empty() => {
@@ -559,6 +567,37 @@ impl App {
             _ => {}
         }
         self.scan_dialog = Some(dialog);
+    }
+
+    fn start_scan(&mut self) {
+        let Some(store) = self.store.as_ref().filter(|_| self.config_valid) else {
+            self.show_notice(
+                Level::Error,
+                "Config could not be loaded; scan was not started",
+            );
+            return;
+        };
+        match Scan::start(
+            store.database(),
+            self.notice_config.scan_directories.clone(),
+        ) {
+            Ok(scan) => self.scan_dialog = Some(ScanDialog::Running(scan)),
+            Err(error) => self.show_notice(Level::Error, format!("Could not start scan: {error}")),
+        }
+    }
+
+    fn poll_scan(&mut self) {
+        let Some(ScanDialog::Running(scan)) = &self.scan_dialog else {
+            return;
+        };
+        let Some(result) = scan.result() else {
+            return;
+        };
+        self.scan_dialog = None;
+        match result.and_then(|writer| writer.publish()) {
+            Ok(()) => self.show_notice(Level::Info, "Scan complete"),
+            Err(error) => self.show_notice(Level::Error, format!("Scan failed: {error}")),
+        }
     }
 
     fn save_config(&mut self, config: Config) -> bool {
@@ -625,8 +664,21 @@ impl App {
         let (title, text, buttons) = match dialog {
             ScanDialog::ConfirmScan => (
                 "Scan directories",
-                "Clear the existing music database and scan again?".into(),
+                "Scan directories and replace the music database?".into(),
                 "[Enter/Y] Scan    [Esc/N] Cancel",
+            ),
+            ScanDialog::Running(scan) => (
+                "Scanning directories",
+                scan.directory().map_or_else(
+                    || "Starting scan…".into(),
+                    |path| {
+                        path_tail(
+                            &path.to_string_lossy(),
+                            frame.area().width.min(60).saturating_sub(4) as usize,
+                        )
+                    },
+                ),
+                "[Enter/Esc/N] Cancel",
             ),
             ScanDialog::Delete(index) => (
                 "Delete directory",
@@ -856,25 +908,51 @@ mod tests {
         let mut app = App::new(None, Vec::new(), None);
         app.page = Page::Scan;
         app.focus = Focus::Main;
-        app.notice_config.scan_directories = vec!["/music".into()];
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir(&music).unwrap();
+        std::fs::write(music.join("song.flac"), []).unwrap();
+        let target = music.display().to_string();
+        app.store = Some(ConfigStore::new(dir.path().join("config.json")));
+        app.config_valid = true;
+        app.notice_config.scan_directories = vec![target.clone()];
         app.scan_cursor = 3;
         for cancel in [KeyCode::Esc, KeyCode::Char('n')] {
             app.key(KeyCode::Enter);
             assert!(matches!(app.scan_dialog, Some(ScanDialog::ConfirmScan)));
             app.key(cancel);
             assert!(app.scan_dialog.is_none());
-            assert_eq!(app.notice_config.scan_directories, ["/music"]);
+            assert_eq!(
+                app.notice_config.scan_directories,
+                std::slice::from_ref(&target)
+            );
         }
+        let database = dir.path().join("database.jsonl");
+        std::fs::write(&database, b"previous database").unwrap();
         for confirm in [KeyCode::Enter, KeyCode::Char('y')] {
             app.key(KeyCode::Enter);
             app.key(confirm);
+            assert!(matches!(app.scan_dialog, Some(ScanDialog::Running(_))));
+            app.key(KeyCode::Esc);
+            app.poll_scan();
             assert!(app.scan_dialog.is_none());
-            assert_eq!(app.notice_config.scan_directories, ["/music"]);
             assert_eq!(
-                app.info.as_ref().unwrap().text,
-                "Scanning is not implemented yet"
+                app.notice_config.scan_directories,
+                std::slice::from_ref(&target)
             );
+            assert_eq!(std::fs::read(&database).unwrap(), b"previous database");
         }
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Enter);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.scan_dialog.is_some() && Instant::now() < deadline {
+            app.poll_scan();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(app.scan_dialog.is_none());
+        assert_eq!(app.info.as_ref().unwrap().text, "Scan complete");
+        let tracks = app.store.as_ref().unwrap().database().load().unwrap();
+        assert_eq!(tracks[0].title, "song.flac");
     }
 
     #[test]
