@@ -598,9 +598,20 @@ impl App {
         for path in &self.notice_config.scan_directories {
             items.push(ListItem::new(format!("  {path}")));
             items.push(ListItem::new("  [ Delete ]"));
+            items.push(ListItem::new(""));
+        }
+        if self.notice_config.scan_directories.is_empty() {
+            items.push(ListItem::new(""));
         }
         items.push(ListItem::new("  [ Add directory ]"));
+        items.push(ListItem::new(""));
         items.push(ListItem::new("  [ Scan ]"));
+        let count = self.notice_config.scan_directories.len();
+        let selected = if self.scan_cursor < count * 2 {
+            self.scan_cursor + self.scan_cursor / 2
+        } else {
+            count * 3 + usize::from(count == 0) + (self.scan_cursor - count * 2) * 2
+        };
         let highlight = if self.focus == Focus::Main {
             Style::default().fg(Color::Black).bg(Color::Cyan)
         } else {
@@ -612,7 +623,7 @@ impl App {
         frame.render_stateful_widget(
             list,
             area,
-            &mut ListState::default().with_selected(Some(self.scan_cursor)),
+            &mut ListState::default().with_selected(Some(selected)),
         );
     }
 
