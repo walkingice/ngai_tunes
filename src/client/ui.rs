@@ -195,6 +195,12 @@ impl App {
         }
     }
 
+    fn quit_requires_confirmation(&self) -> bool {
+        self.snapshot
+            .as_ref()
+            .is_some_and(|state| state.status == Status::Playing)
+    }
+
     fn key(&mut self, key: KeyCode) -> bool {
         if self.confirm {
             match key {
@@ -212,7 +218,11 @@ impl App {
                 self.finish(Command::ExitOnStopping);
                 return true;
             }
-            KeyCode::Char('q') => self.confirm = true,
+            KeyCode::Char('q') if self.quit_requires_confirmation() => self.confirm = true,
+            KeyCode::Char('q') => {
+                self.finish(Command::Quit);
+                return true;
+            }
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Sidebar => Focus::Main,
@@ -436,15 +446,36 @@ mod tests {
     }
 
     #[test]
-    fn empty_scan_and_cancel_quit_keep_the_client_open() {
+    fn empty_scan_can_change_focus() {
         let mut app = App::new(Some(".".into()), Vec::new(), None);
         assert!(!app.key(KeyCode::Enter));
         assert!(app.connection.is_none());
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Playback);
+    }
+
+    #[test]
+    fn quit_requires_confirmation_only_while_playing() {
+        let mut app = App::new(None, Vec::new(), None);
+        assert!(!app.quit_requires_confirmation());
+
+        for status in [Status::Stopping, Status::Pausing, Status::Playing] {
+            app.snapshot = Some(Snapshot {
+                revision: 0,
+                queue: Vec::new(),
+                current: None,
+                status,
+                position_ms: 0,
+                duration_ms: None,
+                repeat: Repeat::Off,
+                order: Order::Sequential,
+                error: None,
+            });
+            assert_eq!(app.quit_requires_confirmation(), status == Status::Playing);
+        }
         assert!(!app.key(KeyCode::Char('q')));
         assert!(app.confirm);
         assert!(!app.key(KeyCode::Esc));
         assert!(!app.confirm);
-        app.key(KeyCode::Tab);
-        assert!(app.focus == Focus::Playback);
     }
 }
