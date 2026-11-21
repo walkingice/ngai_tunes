@@ -536,10 +536,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|state| state.status == Status::Stopping) =>
             {
-                "[Enter] ↺   [Space] ▶/⏸   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] ↺   [Space] ▶/⏸   [n] Next   [p/N] Previous   [←/→] Seek   [r] Repeat   [o] Order"
             }
             Focus::Playback => {
-                "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [N/p] Previous   [←/→] Seek   [R] Repeat   [O] Order"
+                "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [p/N] Previous   [←/→] Seek   [r] Repeat   [o] Order"
             }
         };
         frame.render_widget(
@@ -558,7 +558,7 @@ impl App {
                 frame,
                 "Quit",
                 "Stop playback and exit?",
-                "[Enter/Y] Confirm    [Esc/N] Cancel",
+                "[Enter/y] Confirm    [Esc/n] Cancel",
             );
         }
     }
@@ -726,7 +726,7 @@ impl App {
             ScanDialog::ConfirmScan => (
                 "Scan directories",
                 "Scan directories and replace the music database?".into(),
-                "[Enter/Y] Scan    [Esc/N] Cancel",
+                "[Enter/y] Scan    [Esc/n] Cancel",
             ),
             ScanDialog::Running(scan) => (
                 "Scanning directories",
@@ -750,7 +750,7 @@ impl App {
                         frame.area().width.min(60).saturating_sub(4) as usize
                     )
                 ),
-                "[Enter/Y] Delete    [Esc/N] Cancel",
+                "[Enter/y] Delete    [Esc/n] Cancel",
             ),
             ScanDialog::Edit { index, text } => (
                 if index.is_some() {
