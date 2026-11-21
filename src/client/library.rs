@@ -52,9 +52,25 @@ pub struct Library {
 
 #[derive(Default)]
 pub struct Filter {
-    pub values: Vec<String>,
+    values: Vec<String>,
     pub cursor: usize,
     pub selected: usize,
+}
+
+impl Filter {
+    pub fn labels(&self) -> impl Iterator<Item = &str> {
+        std::iter::once("All").chain(self.values.iter().map(String::as_str))
+    }
+
+    pub fn row_count(&self) -> usize {
+        self.values.len() + 1
+    }
+
+    fn selected_value(&self) -> Option<&String> {
+        self.selected
+            .checked_sub(1)
+            .map(|index| &self.values[index])
+    }
 }
 
 pub fn load(database: Database) -> io::Result<mpsc::Receiver<io::Result<Library>>> {
@@ -113,19 +129,18 @@ impl Library {
     }
 
     fn update_songs(&mut self) {
-        self.songs =
-            self.entries
-                .iter()
-                .filter(|track| {
-                    Facet::ALL.into_iter().all(|facet| {
-                        let filter = self.filter(facet);
-                        filter.selected.checked_sub(1).is_none_or(|selected| {
-                            facet.tags(track).contains(&filter.values[selected])
-                        })
-                    })
+        self.songs = self
+            .entries
+            .iter()
+            .filter(|track| {
+                Facet::ALL.into_iter().all(|facet| {
+                    self.filter(facet)
+                        .selected_value()
+                        .is_none_or(|value| facet.tags(track).contains(value))
                 })
-                .map(to_song)
-                .collect();
+            })
+            .map(to_song)
+            .collect();
         self.cursor = 0;
     }
 }
@@ -149,6 +164,19 @@ fn joined(values: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_row_is_distinct_from_a_tag_named_all() {
+        let mut filter = Filter::default();
+        assert_eq!(filter.row_count(), 1);
+        assert_eq!(filter.labels().collect::<Vec<_>>(), ["All"]);
+        assert_eq!(filter.selected_value(), None);
+
+        filter.values.push("All".into());
+        filter.selected = 1;
+        assert_eq!(filter.labels().collect::<Vec<_>>(), ["All", "All"]);
+        assert_eq!(filter.selected_value().map(String::as_str), Some("All"));
+    }
 
     fn track(title: &str, genres: &[&str], artists: &[&str], album: &str) -> ScanTrack {
         ScanTrack {

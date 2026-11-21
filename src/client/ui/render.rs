@@ -201,13 +201,10 @@ impl App {
         for (facet, &column) in Facet::ALL.into_iter().zip(columns.iter()) {
             let focus = Focus::Filter(facet);
             let filter = self.library.filter(facet);
-            let items = std::iter::once("All")
-                .chain(filter.values.iter().map(String::as_str))
-                .enumerate()
-                .map(|(row, label)| {
-                    let marker = if row == filter.selected { "*" } else { " " };
-                    format!("{marker} {label}")
-                });
+            let items = filter.labels().enumerate().map(|(row, label)| {
+                let marker = if row == filter.selected { "*" } else { " " };
+                format!("{marker} {label}")
+            });
             let list = List::new(items)
                 .block(self.panel(facet.label().into(), focus))
                 .highlight_style(self.selection_style(focus));

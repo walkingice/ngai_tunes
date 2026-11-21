@@ -49,7 +49,10 @@ impl Config {
 
 enum ConfigLoad {
     Loaded(ConfigStore),
-    Failed { store: ConfigStore, error: io::Error },
+    Failed {
+        store: ConfigStore,
+        error: io::Error,
+    },
     Unavailable(io::Error),
 }
 
@@ -494,7 +497,7 @@ impl App {
         match key {
             KeyCode::Up | KeyCode::Down => {
                 let filter = self.library.filter_mut(facet);
-                filter.cursor = move_cursor(filter.cursor, filter.values.len() + 1, key);
+                filter.cursor = move_cursor(filter.cursor, filter.row_count(), key);
             }
             KeyCode::Enter => self.library.apply(facet),
             _ => {}
@@ -647,10 +650,7 @@ impl App {
             );
             return;
         };
-        match Scan::start(
-            store.database(),
-            self.config.scan_directories.clone(),
-        ) {
+        match Scan::start(store.database(), self.config.scan_directories.clone()) {
             Ok(scan) => self.scan_dialog = Some(ScanDialog::Running(scan)),
             Err(error) => self.show_notice(Level::Error, format!("Could not start scan: {error}")),
         }
@@ -763,7 +763,10 @@ mod tests {
     #[test]
     fn settings_rows_keep_spacers_out_of_action_order() {
         use SettingsRow::*;
-        assert_eq!(settings_rows(0).collect::<Vec<_>>(), [Spacer, Add, Spacer, Scan]);
+        assert_eq!(
+            settings_rows(0).collect::<Vec<_>>(),
+            [Spacer, Add, Spacer, Scan]
+        );
         let actions: Vec<_> = settings_rows(2).filter(|row| *row != Spacer).collect();
         assert_eq!(actions, [Edit(0), Delete(0), Edit(1), Delete(1), Add, Scan]);
     }
@@ -859,10 +862,7 @@ mod tests {
             assert!(matches!(app.scan_dialog, Some(ScanDialog::ConfirmScan)));
             app.key(cancel);
             assert!(app.scan_dialog.is_none());
-            assert_eq!(
-                app.config.scan_directories,
-                std::slice::from_ref(&target)
-            );
+            assert_eq!(app.config.scan_directories, std::slice::from_ref(&target));
         }
         let database = dir.path().join("database.jsonl");
         std::fs::write(&database, b"previous database").unwrap();
@@ -873,10 +873,7 @@ mod tests {
             app.key(KeyCode::Esc);
             app.poll_scan();
             assert!(app.scan_dialog.is_none());
-            assert_eq!(
-                app.config.scan_directories,
-                std::slice::from_ref(&target)
-            );
+            assert_eq!(app.config.scan_directories, std::slice::from_ref(&target));
             assert_eq!(std::fs::read(&database).unwrap(), b"previous database");
         }
         app.key(KeyCode::Enter);
@@ -955,7 +952,9 @@ mod tests {
             text: "/music".into(),
         });
         app.scan_dialog_key(KeyCode::Enter);
-        assert!(matches!(&app.scan_dialog, Some(ScanDialog::Edit { text, .. }) if text == "/music"));
+        assert!(
+            matches!(&app.scan_dialog, Some(ScanDialog::Edit { text, .. }) if text == "/music")
+        );
         assert_eq!(app.config, Config::default());
         assert_eq!(std::fs::read(path).unwrap(), b"{");
 
