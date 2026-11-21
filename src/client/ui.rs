@@ -32,46 +32,9 @@ impl Level {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct NoticeConfig {
-    info_seconds: u64,
-    warning_seconds: u64,
-    error_seconds: u64,
-}
+use crate::storage::config::{Config, ConfigStore};
 
-impl Default for NoticeConfig {
-    fn default() -> Self {
-        Self {
-            info_seconds: 5,
-            warning_seconds: 5,
-            error_seconds: 10,
-        }
-    }
-}
-
-impl NoticeConfig {
-    fn load() -> Self {
-        let Some(home) = std::env::var_os("HOME") else {
-            return Self::default();
-        };
-        let path = PathBuf::from(home).join(".config/ngai_tunes/config.json");
-        match std::fs::read_to_string(path) {
-            Ok(contents) => match serde_json::from_str(&contents) {
-                Ok(config) => config,
-                Err(error) => {
-                    eprintln!("Invalid config: {error}");
-                    Self::default()
-                }
-            },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Self::default(),
-            Err(error) => {
-                eprintln!("Could not read config: {error}");
-                Self::default()
-            }
-        }
-    }
-
+impl Config {
     fn duration(&self, level: Level) -> Duration {
         Duration::from_secs(match level {
             Level::Info => self.info_seconds,
@@ -79,6 +42,20 @@ impl NoticeConfig {
             Level::Error => self.error_seconds,
         })
     }
+}
+
+type NoticeConfig = Config;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Playing,
+    Scan,
+}
+
+#[derive(Clone)]
+enum ScanDialog {
+    Edit { index: Option<usize>, text: String },
+    Delete(usize),
 }
 
 struct Notice {
@@ -111,6 +88,11 @@ pub struct App {
     info: Option<Notice>,
     notice_config: NoticeConfig,
     confirm: bool,
+    page: Page,
+    scan_cursor: usize,
+    scan_dialog: Option<ScanDialog>,
+    store: Option<ConfigStore>,
+    config_valid: bool,
     initialized: bool,
     pending: Option<u64>,
 }
@@ -121,6 +103,17 @@ impl App {
         tracks: Vec<Track>,
         connection: Option<Connection>,
     ) -> Self {
+        let store_result = ConfigStore::user();
+        let config_error = store_result.as_ref().err().map(ToString::to_string);
+        let store = store_result.ok();
+        let loaded = store.as_ref().map(ConfigStore::load);
+        let config_valid = matches!(loaded, Some(Ok(_)));
+        let config_error = config_error.or_else(|| {
+            loaded
+                .as_ref()
+                .and_then(|result| result.as_ref().err())
+                .map(ToString::to_string)
+        });
         let mut app = Self {
             source,
             tracks,
@@ -130,12 +123,19 @@ impl App {
             snapshot: None,
             updated: Instant::now(),
             info: None,
-            notice_config: NoticeConfig::load(),
+            notice_config: loaded.and_then(Result::ok).unwrap_or_default(),
+            store,
+            config_valid,
+            page: Page::Playing,
+            scan_cursor: 0,
+            scan_dialog: None,
             confirm: false,
             initialized: false,
             pending: None,
         };
-        if app.source.is_some() {
+        if let Some(error) = config_error {
+            app.show_notice(Level::Error, format!("Could not load config: {error}"));
+        } else if app.source.is_some() {
             app.show_notice(Level::Info, format!("{} tracks found", app.tracks.len()));
         }
         app
@@ -292,6 +292,10 @@ impl App {
     }
 
     fn key(&mut self, key: KeyCode) -> bool {
+        if self.scan_dialog.is_some() {
+            self.scan_dialog_key(key);
+            return false;
+        }
         if self.confirm {
             match key {
                 KeyCode::Char('y') | KeyCode::Enter => {
@@ -320,6 +324,23 @@ impl App {
                     Focus::Playback => Focus::Sidebar,
                 }
             }
+            KeyCode::Up | KeyCode::Down if self.focus == Focus::Sidebar => {
+                self.page = if self.page == Page::Playing {
+                    Page::Scan
+                } else {
+                    Page::Playing
+                };
+            }
+            KeyCode::Up if self.focus == Focus::Main && self.page == Page::Scan => {
+                self.scan_cursor = self.scan_cursor.saturating_sub(1);
+            }
+            KeyCode::Down if self.focus == Focus::Main && self.page == Page::Scan => {
+                self.scan_cursor =
+                    (self.scan_cursor + 1).min(self.notice_config.scan_directories.len() * 2 + 1);
+            }
+            KeyCode::Enter if self.focus == Focus::Main && self.page == Page::Scan => {
+                self.scan_activate()
+            }
             KeyCode::Up if self.focus == Focus::Main => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Down if self.focus == Focus::Main => {
                 self.cursor = (self.cursor + 1).min(self.tracks.len().saturating_sub(1));
@@ -339,6 +360,7 @@ impl App {
     fn playback_command(&self, key: KeyCode) -> Option<Command> {
         let state = self.snapshot.as_ref()?;
         let playing_tab_seek = self.focus == Focus::Main
+            && self.page == Page::Playing
             && state.current.is_some()
             && matches!(state.status, Status::Playing | Status::Pausing)
             && matches!(key, KeyCode::Left | KeyCode::Right);
@@ -406,10 +428,26 @@ impl App {
         let [sidebar, main] =
             Layout::horizontal([Constraint::Length(13), Constraint::Min(0)]).areas(top);
         frame.render_widget(
-            Paragraph::new("Playing").block(self.panel("Tabs".into(), Focus::Sidebar)),
+            Paragraph::new(vec![
+                Line::from(if self.page == Page::Playing {
+                    "> Playing"
+                } else {
+                    "  Playing"
+                }),
+                Line::from(if self.page == Page::Scan {
+                    "> Scan"
+                } else {
+                    "  Scan"
+                }),
+            ])
+            .block(self.panel("Tabs".into(), Focus::Sidebar)),
             sidebar,
         );
-        self.render_list(frame, main);
+        if self.page == Page::Playing {
+            self.render_list(frame, main);
+        } else {
+            self.render_scan(frame, main);
+        }
         self.render_playback(frame, playback);
         if let Some(notice) = self
             .info
@@ -425,6 +463,7 @@ impl App {
         }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
+            Focus::Main if self.page == Page::Scan => "[↑/↓] Select   [Enter] Activate",
             Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
             Focus::Playback
                 if self
@@ -446,6 +485,9 @@ impl App {
             .wrap(Wrap { trim: true }),
             keys,
         );
+        if let Some(dialog) = &self.scan_dialog {
+            self.render_scan_dialog(frame, dialog);
+        }
         if self.confirm {
             let [_, middle, _] = Layout::vertical([
                 Constraint::Fill(1),
@@ -466,6 +508,159 @@ impl App {
                 dialog,
             );
         }
+    }
+
+    fn scan_activate(&mut self) {
+        let count = self.notice_config.scan_directories.len();
+        self.scan_dialog = if self.scan_cursor < count * 2 {
+            let index = self.scan_cursor / 2;
+            if self.scan_cursor.is_multiple_of(2) {
+                Some(ScanDialog::Edit {
+                    index: Some(index),
+                    text: self.notice_config.scan_directories[index].clone(),
+                })
+            } else {
+                Some(ScanDialog::Delete(index))
+            }
+        } else if self.scan_cursor == count * 2 {
+            Some(ScanDialog::Edit {
+                index: None,
+                text: String::new(),
+            })
+        } else {
+            None
+        };
+    }
+
+    fn scan_dialog_key(&mut self, key: KeyCode) {
+        let Some(mut dialog) = self.scan_dialog.take() else {
+            return;
+        };
+        match (&mut dialog, key) {
+            (_, KeyCode::Esc) => return,
+            (ScanDialog::Delete(index), KeyCode::Enter | KeyCode::Char('y')) => {
+                let mut config = self.notice_config.clone();
+                config.scan_directories.remove(*index);
+                if self.save_config(config) {
+                    self.scan_cursor = self.scan_cursor.saturating_sub(1);
+                    return;
+                }
+            }
+            (ScanDialog::Delete(_), KeyCode::Char('n')) => return,
+            (ScanDialog::Edit { index, text }, KeyCode::Enter) if !text.trim().is_empty() => {
+                let mut config = self.notice_config.clone();
+                if let Some(index) = index {
+                    config.scan_directories[*index] = text.clone();
+                } else {
+                    config.scan_directories.push(text.clone());
+                }
+                if self.save_config(config) {
+                    return;
+                }
+            }
+            (ScanDialog::Edit { text, .. }, KeyCode::Backspace) => {
+                text.pop();
+            }
+            (ScanDialog::Edit { text, .. }, KeyCode::Char(c)) => text.push(c),
+            _ => {}
+        }
+        self.scan_dialog = Some(dialog);
+    }
+
+    fn save_config(&mut self, config: Config) -> bool {
+        if !self.config_valid {
+            self.show_notice(
+                Level::Error,
+                "Config could not be loaded; changes were not saved",
+            );
+            return false;
+        }
+        let result = self
+            .store
+            .as_ref()
+            .expect("valid config has a store")
+            .save_if_unchanged(&self.notice_config, &config);
+        match result {
+            Ok(()) => {
+                self.notice_config = config;
+                true
+            }
+            Err(error) => {
+                self.show_notice(Level::Error, format!("Could not save config: {error}"));
+                false
+            }
+        }
+    }
+
+    fn render_scan(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::widgets::{List, ListItem, ListState};
+        let mut items = Vec::new();
+        for path in &self.notice_config.scan_directories {
+            items.push(ListItem::new(format!("  {path}")));
+            items.push(ListItem::new("  [ Delete ]"));
+        }
+        items.push(ListItem::new("  [ Add directory ]"));
+        items.push(ListItem::new("  [ Scan ]"));
+        let highlight = if self.focus == Focus::Main {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White).bg(Color::DarkGray)
+        };
+        let list = List::new(items)
+            .block(self.panel("Recursive Scan Directories".into(), Focus::Main))
+            .highlight_style(highlight);
+        frame.render_stateful_widget(
+            list,
+            area,
+            &mut ListState::default().with_selected(Some(self.scan_cursor)),
+        );
+    }
+
+    fn render_scan_dialog(&self, frame: &mut Frame, dialog: &ScanDialog) {
+        let height = 7.min(frame.area().height);
+        let width = 60.min(frame.area().width);
+        let area = Rect::new(
+            frame.area().x + (frame.area().width - width) / 2,
+            frame.area().y + (frame.area().height - height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        let (title, text) = match dialog {
+            ScanDialog::Delete(index) => (
+                "Delete directory",
+                format!(
+                    "Delete this scan directory?\n\n{}\n\n[Enter/Y] Delete    [Esc/N] Cancel",
+                    self.notice_config.scan_directories[*index]
+                        .chars()
+                        .take(width.saturating_sub(4) as usize)
+                        .collect::<String>()
+                ),
+            ),
+            ScanDialog::Edit { index, text } => (
+                if index.is_some() {
+                    "Edit directory"
+                } else {
+                    "Add directory"
+                },
+                format!(
+                    "Directory path:\n{}\n\n[Enter] Save    [Esc] Cancel",
+                    text.chars()
+                        .rev()
+                        .take(width.saturating_sub(4) as usize)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                ),
+            ),
+        };
+        frame.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .block(Block::bordered().title(title)),
+            area,
+        );
     }
 
     fn render_list(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
@@ -619,6 +814,45 @@ fn clock(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_targets_can_be_added_edited_and_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(None, Vec::new(), None);
+        app.store = Some(ConfigStore::new(dir.path().join("config.json")));
+        app.config_valid = true;
+        app.notice_config = Config::default();
+        app.focus = Focus::Sidebar;
+        app.key(KeyCode::Down);
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Enter);
+        for c in "/music".chars() {
+            app.key(KeyCode::Char(c));
+        }
+        app.key(KeyCode::Enter);
+        assert_eq!(app.notice_config.scan_directories, ["/music"]);
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Backspace);
+        app.key(KeyCode::Char('x'));
+        app.key(KeyCode::Enter);
+        assert_eq!(app.notice_config.scan_directories, ["/musix"]);
+        app.key(KeyCode::Down);
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Esc);
+        assert_eq!(app.notice_config.scan_directories.len(), 1);
+        app.key(KeyCode::Enter);
+        app.key(KeyCode::Enter);
+        assert!(app.notice_config.scan_directories.is_empty());
+        assert!(
+            app.store
+                .as_ref()
+                .unwrap()
+                .load()
+                .unwrap()
+                .scan_directories
+                .is_empty()
+        );
+    }
 
     #[test]
     fn selection_color_follows_focus_while_scrolling() {

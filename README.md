@@ -39,6 +39,11 @@ applies to natural endings. Manual next and previous follow play order.
 In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
 
+Use Tab to focus the sidebar, then Up/Down to select Scan and Enter to open it.
+Select a directory path to edit it, or select its Delete button to confirm
+removal. Add directory creates a target. The Scan button is not active yet.
+Targets are saved in `config.json` under `scan_directories`.
+
 See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
 
 ## Configuration
