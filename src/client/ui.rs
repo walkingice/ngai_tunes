@@ -47,7 +47,38 @@ impl Config {
     }
 }
 
-type NoticeConfig = Config;
+enum ConfigLoad {
+    Loaded(ConfigStore),
+    Failed { store: ConfigStore, error: io::Error },
+    Unavailable(io::Error),
+}
+
+impl ConfigLoad {
+    fn load(store: io::Result<ConfigStore>) -> (Self, Config) {
+        let store = match store {
+            Ok(store) => store,
+            Err(error) => return (Self::Unavailable(error), Config::default()),
+        };
+        match store.load() {
+            Ok(config) => (Self::Loaded(store), config),
+            Err(error) => (Self::Failed { store, error }, Config::default()),
+        }
+    }
+
+    fn store(&self) -> Option<&ConfigStore> {
+        match self {
+            Self::Loaded(store) | Self::Failed { store, .. } => Some(store),
+            Self::Unavailable(_) => None,
+        }
+    }
+
+    fn error(&self) -> Option<&io::Error> {
+        match self {
+            Self::Loaded(_) => None,
+            Self::Failed { error, .. } | Self::Unavailable(error) => Some(error),
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -93,7 +124,7 @@ struct Notice {
 }
 
 impl Notice {
-    fn visible(&self, config: &NoticeConfig) -> bool {
+    fn visible(&self, config: &Config) -> bool {
         self.created.elapsed() < config.duration(self.level)
     }
 }
@@ -139,14 +170,13 @@ pub struct App {
     snapshot: Option<Snapshot>,
     updated: Instant,
     info: Option<Notice>,
-    notice_config: NoticeConfig,
+    config: Config,
     page: Page,
     library: Library,
     library_load: Option<Receiver<io::Result<Library>>>,
     scan_cursor: usize,
     scan_dialog: Option<ScanDialog>,
-    store: Option<ConfigStore>,
-    config_valid: bool,
+    config_load: ConfigLoad,
     initialized: bool,
     pending: Option<u64>,
     pending_play: Option<u64>,
@@ -158,17 +188,7 @@ impl App {
         tracks: Vec<Track>,
         connection: Option<Connection>,
     ) -> Self {
-        let store_result = ConfigStore::user();
-        let config_error = store_result.as_ref().err().map(ToString::to_string);
-        let store = store_result.ok();
-        let loaded = store.as_ref().map(ConfigStore::load);
-        let config_valid = matches!(loaded, Some(Ok(_)));
-        let config_error = config_error.or_else(|| {
-            loaded
-                .as_ref()
-                .and_then(|result| result.as_ref().err())
-                .map(ToString::to_string)
-        });
+        let (config_load, config) = ConfigLoad::load(ConfigStore::user());
         let mut app = Self {
             page: if source.is_some() {
                 Page::Browsing
@@ -185,9 +205,8 @@ impl App {
             snapshot: None,
             updated: Instant::now(),
             info: None,
-            notice_config: loaded.and_then(Result::ok).unwrap_or_default(),
-            store,
-            config_valid,
+            config,
+            config_load,
             library: Library::default(),
             library_load: None,
             scan_cursor: 0,
@@ -196,7 +215,7 @@ impl App {
             pending: None,
             pending_play: None,
         };
-        if let Some(error) = config_error {
+        if let Some(error) = app.config_load.error() {
             app.show_notice(Level::Error, format!("Could not load config: {error}"));
         } else if app.source.is_some() {
             app.show_notice(
@@ -227,8 +246,8 @@ impl App {
     fn initialize(&mut self) {
         if self.source.is_none()
             && self
-                .store
-                .as_ref()
+                .config_load
+                .store()
                 .is_some_and(|store| store.database().exists())
         {
             self.page = Page::Scanned;
@@ -485,7 +504,7 @@ impl App {
     fn main_key(&mut self, key: KeyCode) {
         match key {
             KeyCode::Up | KeyCode::Down if self.page == Page::Scan => {
-                let actions = settings_rows(self.notice_config.scan_directories.len())
+                let actions = settings_rows(self.config.scan_directories.len())
                     .filter(|row| *row != SettingsRow::Spacer)
                     .count();
                 self.scan_cursor = move_cursor(self.scan_cursor, actions, key);
@@ -560,7 +579,7 @@ impl App {
     }
 
     fn scan_activate(&mut self) {
-        let directories = &self.notice_config.scan_directories;
+        let directories = &self.config.scan_directories;
         self.scan_dialog = settings_rows(directories.len())
             .filter(|row| *row != SettingsRow::Spacer)
             .nth(self.scan_cursor)
@@ -586,7 +605,7 @@ impl App {
         match (&mut dialog, key) {
             (_, KeyCode::Esc) => return,
             (ScanDialog::Delete(index), KeyCode::Enter | KeyCode::Char('y')) => {
-                let mut config = self.notice_config.clone();
+                let mut config = self.config.clone();
                 config.scan_directories.remove(*index);
                 if self.save_config(config) {
                     self.scan_cursor = self.scan_cursor.saturating_sub(1);
@@ -601,7 +620,7 @@ impl App {
                 return;
             }
             (ScanDialog::Edit { index, text }, KeyCode::Enter) if !text.trim().is_empty() => {
-                let mut config = self.notice_config.clone();
+                let mut config = self.config.clone();
                 if let Some(index) = index {
                     config.scan_directories[*index] = text.clone();
                 } else {
@@ -621,7 +640,7 @@ impl App {
     }
 
     fn start_scan(&mut self) {
-        let Some(store) = self.store.as_ref().filter(|_| self.config_valid) else {
+        let ConfigLoad::Loaded(store) = &self.config_load else {
             self.show_notice(
                 Level::Error,
                 "Config could not be loaded; scan was not started",
@@ -630,7 +649,7 @@ impl App {
         };
         match Scan::start(
             store.database(),
-            self.notice_config.scan_directories.clone(),
+            self.config.scan_directories.clone(),
         ) {
             Ok(scan) => self.scan_dialog = Some(ScanDialog::Running(scan)),
             Err(error) => self.show_notice(Level::Error, format!("Could not start scan: {error}")),
@@ -656,21 +675,17 @@ impl App {
     }
 
     fn save_config(&mut self, config: Config) -> bool {
-        if !self.config_valid {
+        let ConfigLoad::Loaded(store) = &self.config_load else {
             self.show_notice(
                 Level::Error,
                 "Config could not be loaded; changes were not saved",
             );
             return false;
-        }
-        let result = self
-            .store
-            .as_ref()
-            .expect("valid config has a store")
-            .save_if_unchanged(&self.notice_config, &config);
+        };
+        let result = store.save_if_unchanged(&self.config, &config);
         match result {
             Ok(()) => {
-                self.notice_config = config;
+                self.config = config;
                 true
             }
             Err(error) => {
@@ -682,8 +697,8 @@ impl App {
 
     fn reload_library(&mut self) {
         let result = self
-            .store
-            .as_ref()
+            .config_load
+            .store()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Config directory unavailable"))
             .and_then(|store| library::load(store.database()));
         self.library_load = match result {
@@ -780,7 +795,7 @@ mod tests {
         writer.write(&track("First", "A")).unwrap();
         writer.write(&track("Second", "B")).unwrap();
         writer.publish().unwrap();
-        app.store = Some(store);
+        app.config_load = ConfigLoad::Loaded(store);
         app.reload_library();
         assert!(app.library.songs.is_empty());
         wait_for_library(&mut app);
@@ -836,9 +851,8 @@ mod tests {
         std::fs::create_dir(&music).unwrap();
         std::fs::write(music.join("song.flac"), []).unwrap();
         let target = music.display().to_string();
-        app.store = Some(ConfigStore::new(dir.path().join("config.json")));
-        app.config_valid = true;
-        app.notice_config.scan_directories = vec![target.clone()];
+        app.config_load = ConfigLoad::Loaded(ConfigStore::new(dir.path().join("config.json")));
+        app.config.scan_directories = vec![target.clone()];
         app.scan_cursor = 3;
         for cancel in [KeyCode::Esc, KeyCode::Char('n')] {
             app.key(KeyCode::Enter);
@@ -846,7 +860,7 @@ mod tests {
             app.key(cancel);
             assert!(app.scan_dialog.is_none());
             assert_eq!(
-                app.notice_config.scan_directories,
+                app.config.scan_directories,
                 std::slice::from_ref(&target)
             );
         }
@@ -860,7 +874,7 @@ mod tests {
             app.poll_scan();
             assert!(app.scan_dialog.is_none());
             assert_eq!(
-                app.notice_config.scan_directories,
+                app.config.scan_directories,
                 std::slice::from_ref(&target)
             );
             assert_eq!(std::fs::read(&database).unwrap(), b"previous database");
@@ -882,9 +896,8 @@ mod tests {
     fn scan_targets_can_be_added_edited_and_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Vec::new(), None);
-        app.store = Some(ConfigStore::new(dir.path().join("config.json")));
-        app.config_valid = true;
-        app.notice_config = Config::default();
+        app.config_load = ConfigLoad::Loaded(ConfigStore::new(dir.path().join("config.json")));
+        app.config = Config::default();
         app.focus = Focus::Sidebar;
         app.key(KeyCode::Down);
         app.key(KeyCode::Down);
@@ -894,22 +907,22 @@ mod tests {
             app.key(KeyCode::Char(c));
         }
         app.key(KeyCode::Enter);
-        assert_eq!(app.notice_config.scan_directories, ["/music"]);
+        assert_eq!(app.config.scan_directories, ["/music"]);
         app.key(KeyCode::Enter);
         app.key(KeyCode::Backspace);
         app.key(KeyCode::Char('x'));
         app.key(KeyCode::Enter);
-        assert_eq!(app.notice_config.scan_directories, ["/musix"]);
+        assert_eq!(app.config.scan_directories, ["/musix"]);
         app.key(KeyCode::Down);
         app.key(KeyCode::Enter);
         app.key(KeyCode::Esc);
-        assert_eq!(app.notice_config.scan_directories.len(), 1);
+        assert_eq!(app.config.scan_directories.len(), 1);
         app.key(KeyCode::Enter);
         app.key(KeyCode::Enter);
-        assert!(app.notice_config.scan_directories.is_empty());
+        assert!(app.config.scan_directories.is_empty());
         assert!(
-            app.store
-                .as_ref()
+            app.config_load
+                .store()
                 .unwrap()
                 .load()
                 .unwrap()
@@ -919,16 +932,50 @@ mod tests {
     }
 
     #[test]
+    fn malformed_config_allows_reading_the_existing_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, b"{").unwrap();
+        let store = ConfigStore::new(path.clone());
+        store.database().stage().unwrap().publish().unwrap();
+        let mut app = App::new(None, Vec::new(), None);
+        (app.config_load, app.config) = ConfigLoad::load(Ok(store));
+        assert!(app.config_load.error().is_some());
+        assert_eq!(app.config, Config::default());
+
+        app.initialize();
+        assert!(app.page == Page::Scanned);
+        app.reload_library();
+        assert!(app.library_load.is_some());
+        wait_for_library(&mut app);
+        assert!(app.library.songs.is_empty());
+
+        app.scan_dialog = Some(ScanDialog::Edit {
+            index: None,
+            text: "/music".into(),
+        });
+        app.scan_dialog_key(KeyCode::Enter);
+        assert!(matches!(&app.scan_dialog, Some(ScanDialog::Edit { text, .. }) if text == "/music"));
+        assert_eq!(app.config, Config::default());
+        assert_eq!(std::fs::read(path).unwrap(), b"{");
+
+        app.scan_dialog = Some(ScanDialog::ConfirmScan);
+        app.scan_dialog_key(KeyCode::Enter);
+        assert!(app.scan_dialog.is_none());
+        assert_eq!(app.info.as_ref().unwrap().level, Level::Error);
+    }
+
+    #[test]
     fn initial_page_prefers_a_directory_then_the_scanned_database() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("config.json");
         let mut app = App::new(None, Vec::new(), None);
-        app.store = Some(ConfigStore::new(config.clone()));
+        app.config_load = ConfigLoad::Loaded(ConfigStore::new(config.clone()));
         app.initialize();
         assert!(app.page == Page::Playing);
 
-        app.store
-            .as_ref()
+        app.config_load
+            .store()
             .unwrap()
             .database()
             .stage()
@@ -940,7 +987,7 @@ mod tests {
         assert!(app.focus == Focus::Main);
 
         let mut app = App::new(Some(dir.path().into()), Vec::new(), None);
-        app.store = Some(ConfigStore::new(config));
+        app.config_load = ConfigLoad::Loaded(ConfigStore::new(config));
         app.initialize();
         assert!(app.page == Page::Browsing);
     }
@@ -1005,7 +1052,7 @@ mod tests {
 
     #[test]
     fn notices_use_configured_durations_and_colors() {
-        let config: NoticeConfig =
+        let config: Config =
             serde_json::from_str(r#"{"info_seconds":1,"warning_seconds":2,"error_seconds":3}"#)
                 .unwrap();
         for (level, seconds, color) in [
@@ -1028,7 +1075,7 @@ mod tests {
             );
             assert_eq!(level.color(), color);
         }
-        let defaults: NoticeConfig = serde_json::from_str("{}").unwrap();
+        let defaults: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(defaults.duration(Level::Info), Duration::from_secs(5));
         assert_eq!(defaults.duration(Level::Warning), Duration::from_secs(5));
         assert_eq!(defaults.duration(Level::Error), Duration::from_secs(10));

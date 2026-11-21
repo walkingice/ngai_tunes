@@ -23,22 +23,3 @@ row so moving the cursor alone does not rebuild Songs.
 **Check** an empty facet still displays All. Enter on a secondary artist
 matches tracks containing that artist, combining filters requires every
 applied facet to match, and resetting restores all songs and cursor zero.
-
-## 3. Make configuration load outcomes explicit
-
-In [App](../src/client/ui.rs), `notice_config` holds the entire Config,
-including scan targets. Whether it can be saved depends on `config_valid`
-and a separate optional store. Reading `save_config` requires trusting
-the invariant behind `expect("valid config has a store")`.
-
-Use the existing Config name for the settings value. Group store access
-and load status in a private enum representing three outcomes. A loaded
-store permits saving and scanning. A store with a load error still gives
-access to its database. An unavailable store has no database path. Build
-the outcome in one place during initialization and keep the original error
-for the notice. Keep displaying defaults after a load failure.
-
-**Check** a malformed config beside an existing database still allows
-opening Scanned. Saving targets and starting a scan must stay blocked in
-that case. A successful load still saves through `save_if_unchanged`;
-a failed save must keep both the old settings and the edit dialog.

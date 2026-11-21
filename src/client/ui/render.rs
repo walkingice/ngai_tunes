@@ -62,7 +62,7 @@ impl App {
         if let Some(notice) = self
             .info
             .as_ref()
-            .filter(|notice| notice.visible(&self.notice_config))
+            .filter(|notice| notice.visible(&self.config))
         {
             frame.render_widget(
                 Paragraph::new(notice.text.as_str())
@@ -118,7 +118,7 @@ impl App {
 
     fn render_scan(&self, frame: &mut Frame, area: Rect) {
         use ratatui::widgets::ListItem;
-        let directories = &self.notice_config.scan_directories;
+        let directories = &self.config.scan_directories;
         let rows = settings_rows(directories.len());
         let selected = rows
             .enumerate()
@@ -172,7 +172,7 @@ impl App {
                 format!(
                     "Delete this scan directory?\n{}",
                     path_tail(
-                        &self.notice_config.scan_directories[*index],
+                        &self.config.scan_directories[*index],
                         frame.area().width.min(60).saturating_sub(4) as usize
                     )
                 ),
