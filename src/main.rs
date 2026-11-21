@@ -13,6 +13,8 @@ struct Cli {
     attach: bool,
     #[arg(long, conflicts_with = "directory")]
     daemon: bool,
+    #[arg(long, hide = true, conflicts_with_all = ["attach", "daemon", "directory"])]
+    detached_child: bool,
     #[arg(value_name = "DIRECTORY")]
     directory: Option<PathBuf>,
 }
@@ -29,7 +31,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    if cli.daemon {
+    if cli.daemon || cli.detached_child {
         daemon::run()
     } else {
         client::run(cli.directory)
