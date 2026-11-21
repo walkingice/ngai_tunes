@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
     io,
@@ -480,15 +480,20 @@ impl App {
                 ""
             };
             Row::new(vec![
-                playing.to_string(),
-                track
-                    .track_number
-                    .map_or_else(String::new, |number| number.to_string()),
-                track.title.clone(),
-                track.duration_ms.map_or_else(String::new, clock),
-                track.artist.clone().unwrap_or_default(),
-                track.album.clone().unwrap_or_default(),
-                track.genre.clone().unwrap_or_default(),
+                Cell::from(playing),
+                Cell::from(
+                    Line::from(
+                        track
+                            .track_number
+                            .map_or_else(String::new, |number| number.to_string()),
+                    )
+                    .right_aligned(),
+                ),
+                Cell::from(track.title.clone()),
+                Cell::from(track.duration_ms.map_or_else(String::new, clock)),
+                Cell::from(track.artist.clone().unwrap_or_default()),
+                Cell::from(track.album.clone().unwrap_or_default()),
+                Cell::from(track.genre.clone().unwrap_or_default()),
             ])
         });
         let name = self
@@ -505,9 +510,17 @@ impl App {
             .max()
             .unwrap_or(0)
             .max(5);
+        let track_width = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.track_number)
+            .map(|number| number.to_string().len() as u16)
+            .max()
+            .unwrap_or(0)
+            .max(5);
         let widths = [
-            Constraint::Length(7),
-            Constraint::Length(12),
+            Constraint::Length(1),
+            Constraint::Length(track_width),
             Constraint::Fill(3),
             Constraint::Length(time_width),
             Constraint::Fill(2),
@@ -515,15 +528,10 @@ impl App {
             Constraint::Min(5),
         ];
         let table = Table::new(rows, widths)
-            .header(Row::new([
-                "Playing",
-                "Track number",
-                "Title",
-                "Time",
-                "Artist",
-                "Album",
-                "Genre",
-            ]))
+            .header(
+                Row::new(["", "Track", "Title", "Time", "Artist", "Album", "Genre"])
+                    .style(Style::default().fg(Color::DarkGray)),
+            )
             .block(self.panel(name, Focus::Main))
             .row_highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
         frame.render_stateful_widget(table, area, &mut state);
