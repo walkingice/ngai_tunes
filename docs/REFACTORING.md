@@ -4,29 +4,6 @@ These are proposed changes. Start with one numbered item per patch. Run
 `cargo test` before and after each extraction. Keep wire formats, stored
 files and keyboard behavior compatible throughout.
 
-## 1. Separate drawing from input in the client
-
-In [ui.rs](../src/client/ui.rs), App owns both the event loop and the
-layout. A change to the Playback panel currently sends a reader through
-the same file as socket and keyboard handling. First move the standalone
-drawing helpers, including playback_progress and render_dialog, into a
-private ui/render.rs module. Then move the render methods together as an
-impl App there. Keep event handling in the parent during this move.
-
-Verify with the existing panel title, selection color and notice tests.
-Exercise a narrow terminal to check truncation and dialog padding.
-
-## 2. Make keyboard routing explicit
-
-App::key handles several meanings for one key. A letter can edit a
-directory in a dialog or navigate the application. Extract the
-focus-specific matches one at a time. Keep modal handling first, keep
-global shortcuts in one place, and preserve the return value used to
-leave the event loop. Reuse playback_command for playback mappings.
-
-Run the vim navigation and directory editor test after each move. Check
-Tab from each focus and q with both active and stopped playback.
-
 ## 3. Name the library facets
 
 In [library.rs](../src/client/library.rs), the facet labels, tag lookup
