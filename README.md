@@ -36,6 +36,7 @@ Press q to exit. If a track is playing, confirm to stop playback and exit.
 With repeat off, the daemon exits when it reaches the end of the queue.
 
 In Playing, Left/Right seek by five seconds while playing or paused.
+Vim keys `h`, `j`, `k`, and `l` work as Left, Down, Up, and Right.
 Tab switches focus between Main and Playback. Enter in Playback stops or
 restarts the retained track.
 Press uppercase `P` to focus Playback or uppercase `S` to focus the visible

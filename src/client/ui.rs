@@ -409,6 +409,13 @@ impl App {
             }
             return false;
         }
+        let key = match key {
+            KeyCode::Char('h') => KeyCode::Left,
+            KeyCode::Char('j') => KeyCode::Down,
+            KeyCode::Char('k') => KeyCode::Up,
+            KeyCode::Char('l') => KeyCode::Right,
+            key => key,
+        };
         match (key, self.focus) {
             (KeyCode::Up | KeyCode::Down, Focus::Filter(index)) => {
                 let filter = &mut self.library.filters[index];
@@ -1575,6 +1582,29 @@ mod tests {
         assert!(app.confirm);
         assert!(!app.key(KeyCode::Esc));
         assert!(!app.confirm);
+    }
+
+    #[test]
+    fn vim_keys_navigate_tabs_and_remain_text_in_directory_editor() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.page = Page::Playing;
+        app.key(KeyCode::Char('T'));
+        app.key(KeyCode::Char('j'));
+        assert!(app.page == Page::Scanned);
+        app.key(KeyCode::Char('k'));
+        assert!(app.page == Page::Playing);
+
+        app.scan_dialog = Some(ScanDialog::Edit {
+            index: None,
+            text: String::new(),
+        });
+        for key in "hjkl".chars() {
+            app.key(KeyCode::Char(key));
+        }
+        assert!(matches!(
+            app.scan_dialog,
+            Some(ScanDialog::Edit { ref text, .. }) if text == "hjkl"
+        ));
     }
 
     #[test]
