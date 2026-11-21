@@ -5,10 +5,15 @@ when choosing crates or changing the thread model.
 
 ## Processes and ownership
 
-Dispatch an empty argument list and the `attach` subcommand to the same
+Define the CLI once with Rust’s `clap::Parser` derive API. Declare the
+optional directory as `Option<PathBuf>` and mode flags as mutually exclusive
+with each other and the directory. Let clap generate help, usage and parse
+errors and handle the `--` end-of-options marker.
+
+Dispatch an empty argument list and the `--attach` flag to the same
 attach client. A directory argument selects the scan client, with `.`
 resolved against the client’s working directory.
-Support a foreground daemon mode for debugging and a private detached child
+Support a foreground `--daemon` flag for debugging and a private detached child
 mode for the launcher. Keep CLI parsing separate from IPC types.
 
 | Module | Owns |

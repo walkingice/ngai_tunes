@@ -17,6 +17,7 @@ cargo build --release
 
 ```sh
 ./target/release/ngai_tunes               # Attach to the running queue
+./target/release/ngai_tunes --attach      # Explicitly attach to the running queue
 ./target/release/ngai_tunes .             # Scan the working directory
 ./target/release/ngai_tunes ~/Music/Jazz  # Scan one directory
 ```

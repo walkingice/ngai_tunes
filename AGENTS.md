@@ -18,7 +18,10 @@ This file defines the user-visible contract for the first release. The
   its queue with the displayed list and plays the focused entry from zero.
   An empty list has no playable selection and does not launch a daemon.
 - With no arguments, `ngai_tunes` attaches to the existing daemon, shows its
-  queue and selects the current track. `ngai_tunes attach` is an alias. If no daemon is reachable, report that and exit.
+  queue and selects the current track. `ngai_tunes --attach` explicitly requests the
+  same behavior. If no daemon is reachable, report that and exit.
+- Use Unix-style long flags for modes and a positional argument for the
+  directory. Accept at most one of `--attach`, `--daemon` and a directory.
 - Multiple clients may share one daemon. Closing a terminal leaves audio
   playing. A daemon exit leaves an open TUI usable with its list and cursor.
 

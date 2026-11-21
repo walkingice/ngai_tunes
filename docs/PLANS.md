@@ -8,8 +8,11 @@ the working increment. Record actual platform test results in the handoff.
 ## 1. Create the executable and scanner
 
 Create a Cargo binary named ngai_tunes and client, daemon, playback and
-protocol modules. Test CLI dispatch: no arguments and `attach` select attach mode,
-`.` and other directory paths select scan mode, and `daemon` runs the server.
+protocol modules. Add clap with the derive feature and test the CLI with
+`Parser::try_parse_from`. No arguments and `--attach` select attach mode.
+Check that `.`, `attach` and `-- -music` select directory scans and that
+`--daemon` runs the foreground server. Verify generated help, unknown flag
+errors and rejection of conflicting modes or extra directory arguments.
 Scan only immediate regular music files, accepting MP3/FLAC extensions
 case-insensitively. Sort by filename, extract tags and keep a playable entry
 when tags are missing. Distinguish an unreadable directory from an empty one.
