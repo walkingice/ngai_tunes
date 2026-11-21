@@ -106,6 +106,28 @@ enum Focus {
     Playback,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsRow {
+    Edit(usize),
+    Delete(usize),
+    Add,
+    Scan,
+    Spacer,
+}
+
+fn settings_rows(count: usize) -> impl Iterator<Item = SettingsRow> {
+    (0..count)
+        .flat_map(|index| {
+            [
+                SettingsRow::Edit(index),
+                SettingsRow::Delete(index),
+                SettingsRow::Spacer,
+            ]
+        })
+        .chain((count == 0).then_some(SettingsRow::Spacer))
+        .chain([SettingsRow::Add, SettingsRow::Spacer, SettingsRow::Scan])
+}
+
 pub struct App {
     source: Option<PathBuf>,
     directory_tracks: Vec<Track>,
@@ -462,12 +484,11 @@ impl App {
 
     fn main_key(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up if self.page == Page::Scan => {
-                self.scan_cursor = self.scan_cursor.saturating_sub(1);
-            }
-            KeyCode::Down if self.page == Page::Scan => {
-                self.scan_cursor =
-                    (self.scan_cursor + 1).min(self.notice_config.scan_directories.len() * 2 + 1);
+            KeyCode::Up | KeyCode::Down if self.page == Page::Scan => {
+                let actions = settings_rows(self.notice_config.scan_directories.len())
+                    .filter(|row| *row != SettingsRow::Spacer)
+                    .count();
+                self.scan_cursor = move_cursor(self.scan_cursor, actions, key);
             }
             KeyCode::Enter if self.page == Page::Scan => self.scan_activate(),
             KeyCode::Up | KeyCode::Down => {
@@ -539,25 +560,23 @@ impl App {
     }
 
     fn scan_activate(&mut self) {
-        let count = self.notice_config.scan_directories.len();
-        self.scan_dialog = if self.scan_cursor < count * 2 {
-            let index = self.scan_cursor / 2;
-            if self.scan_cursor.is_multiple_of(2) {
-                Some(ScanDialog::Edit {
+        let directories = &self.notice_config.scan_directories;
+        self.scan_dialog = settings_rows(directories.len())
+            .filter(|row| *row != SettingsRow::Spacer)
+            .nth(self.scan_cursor)
+            .map(|row| match row {
+                SettingsRow::Edit(index) => ScanDialog::Edit {
                     index: Some(index),
-                    text: self.notice_config.scan_directories[index].clone(),
-                })
-            } else {
-                Some(ScanDialog::Delete(index))
-            }
-        } else if self.scan_cursor == count * 2 {
-            Some(ScanDialog::Edit {
-                index: None,
-                text: String::new(),
-            })
-        } else {
-            Some(ScanDialog::ConfirmScan)
-        };
+                    text: directories[index].clone(),
+                },
+                SettingsRow::Delete(index) => ScanDialog::Delete(index),
+                SettingsRow::Add => ScanDialog::Edit {
+                    index: None,
+                    text: String::new(),
+                },
+                SettingsRow::Scan => ScanDialog::ConfirmScan,
+                SettingsRow::Spacer => unreachable!("spacers are skipped"),
+            });
     }
 
     fn scan_dialog_key(&mut self, key: KeyCode) {
@@ -725,6 +744,14 @@ fn move_cursor(cursor: usize, count: usize, key: KeyCode) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_rows_keep_spacers_out_of_action_order() {
+        use SettingsRow::*;
+        assert_eq!(settings_rows(0).collect::<Vec<_>>(), [Spacer, Add, Spacer, Scan]);
+        let actions: Vec<_> = settings_rows(2).filter(|row| *row != Spacer).collect();
+        assert_eq!(actions, [Edit(0), Delete(0), Edit(1), Delete(1), Add, Scan]);
+    }
 
     fn wait_for_library(app: &mut App) {
         let deadline = Instant::now() + Duration::from_secs(5);

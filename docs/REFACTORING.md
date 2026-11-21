@@ -4,27 +4,7 @@ The five proposals from commit `d53bd4e` have landed. Rendering lives in
 `ui/render.rs`, keyboard routing has focus-specific handlers, library filters
 use `Facet`, the daemon finishes uploads in `complete_upload`, and playback
 traversal has its own type. The following proposals build on those boundaries.
-Each numbered item can be a separate patch. Start with item 1 for a small
-change that can be checked directly in the TUI.
-
-## 1. Describe Settings rows once
-
-`App::main_key` counts selectable actions, `scan_activate` decodes the
-cursor into an action, and `render_scan` converts it into a screen row.
-Each directory has two actions and a blank spacer. With zero directories
-there is an extra leading spacer. Adding a button currently requires
-updating three different calculations. See [input](../src/client/ui.rs)
-and [rendering](../src/client/ui/render.rs).
-
-Define a private Settings row enum for Edit(index), Delete(index), Add,
-Scan and Spacer. Generate the ordered rows from the directory list. Keep
-the cursor indexed by selectable action. Navigation counts actionable
-rows, activation matches the selected action, and drawing highlights its
-position in the full sequence. Keep text and styling in the renderer.
-
-**Check** an empty list offers Add and Scan. With two directories, move
-through both Edit/Delete pairs, delete the last directory, and confirm
-that Enter still acts on the highlighted row. Spacers must be skipped.
+Each numbered item can be a separate patch.
 
 ## 2. Let Filter own the meaning of the All row
 

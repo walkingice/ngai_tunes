@@ -1,4 +1,4 @@
-use super::{App, Facet, Focus, Page, ScanDialog};
+use super::{App, Facet, Focus, Page, ScanDialog, SettingsRow, settings_rows};
 use crate::protocol::{Order, Repeat, Status};
 use ratatui::{
     Frame,
@@ -118,24 +118,20 @@ impl App {
 
     fn render_scan(&self, frame: &mut Frame, area: Rect) {
         use ratatui::widgets::ListItem;
-        let mut items = Vec::new();
-        for path in &self.notice_config.scan_directories {
-            items.push(ListItem::new(format!("  {path}")));
-            items.push(ListItem::new("  [ Delete ]"));
-            items.push(ListItem::new(""));
-        }
-        if self.notice_config.scan_directories.is_empty() {
-            items.push(ListItem::new(""));
-        }
-        items.push(ListItem::new("  [ Add directory ]"));
-        items.push(ListItem::new(""));
-        items.push(ListItem::new("  [ Scan ]"));
-        let count = self.notice_config.scan_directories.len();
-        let selected = if self.scan_cursor < count * 2 {
-            self.scan_cursor + self.scan_cursor / 2
-        } else {
-            count * 3 + usize::from(count == 0) + (self.scan_cursor - count * 2) * 2
-        };
+        let directories = &self.notice_config.scan_directories;
+        let rows = settings_rows(directories.len());
+        let selected = rows
+            .enumerate()
+            .filter(|(_, row)| *row != SettingsRow::Spacer)
+            .nth(self.scan_cursor)
+            .map(|(index, _)| index);
+        let items = settings_rows(directories.len()).map(|row| match row {
+            SettingsRow::Edit(index) => ListItem::new(format!("  {}", directories[index])),
+            SettingsRow::Delete(_) => ListItem::new("  [ Delete ]"),
+            SettingsRow::Add => ListItem::new("  [ Add directory ]"),
+            SettingsRow::Scan => ListItem::new("  [ Scan ]"),
+            SettingsRow::Spacer => ListItem::new(""),
+        });
         let highlight = if self.focus == Focus::Main {
             Style::default().fg(Color::Black).bg(Color::Cyan)
         } else {
@@ -147,7 +143,7 @@ impl App {
         frame.render_stateful_widget(
             list,
             area,
-            &mut ListState::default().with_selected(Some(selected)),
+            &mut ListState::default().with_selected(selected),
         );
     }
 
