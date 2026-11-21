@@ -27,13 +27,8 @@ impl Database {
         Self { path }
     }
 
-    #[allow(dead_code)] // The library view will be the first production reader.
     pub fn load(&self) -> io::Result<Vec<ScanTrack>> {
-        let file = match File::open(&self.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
+        let file = File::open(&self.path)?;
         BufReader::new(file)
             .lines()
             .map(|line| serde_json::from_str(&line?).map_err(io::Error::other))
@@ -89,7 +84,7 @@ mod tests {
             album: None,
             track_number: None,
         };
-        assert!(database.load().unwrap().is_empty());
+        assert_eq!(database.load().unwrap_err().kind(), io::ErrorKind::NotFound);
         let mut writer = database.stage().unwrap();
         writer.write(&track).unwrap();
         writer.write(&track).unwrap();
