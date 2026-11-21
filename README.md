@@ -40,3 +40,20 @@ In random order, previous retraces the current shuffled cycle. Repeat-off
 exits at the end of the cycle, and repeat-all starts a new shuffle.
 
 See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
+
+## Configuration
+
+Optional notification durations are configured in
+`~/.config/ngai_tunes/config.json`, in seconds:
+
+```json
+{
+  "info_seconds": 5,
+  "warning_seconds": 5,
+  "error_seconds": 10
+}
+```
+
+Omitted values use the defaults shown above. Warnings appear in yellow and
+errors in red. Invalid or unreadable configuration falls back to defaults and
+prints an error on startup.
