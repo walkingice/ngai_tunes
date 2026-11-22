@@ -11,7 +11,9 @@ Build from the repository root with Rust and Cargo. On Linux, install
 and Ubuntu, or `alsa-lib-devel` on Fedora). macOS uses Core Audio.
 
 ```sh
-cargo build --release
+make build       # Release binary (also the default for make)
+make debug       # Debug binary
+make help        # List all targets
 ```
 
 ## Usage
@@ -72,12 +74,12 @@ closes the menu client. An open TUI remains usable.
 
 ### Build the macOS menu bar app
 
-Install [cargo-bundle] once, then run the bundle script from the repository
-root. The script builds the release binary and packages it as `Ngai Tunes.app`.
+Install [cargo-bundle] once, then run `make menu` from the repository root.
+This builds the release binary and packages it as `Ngai Tunes.app`.
 
 ```sh
 cargo install --locked cargo-bundle --version 0.12.0
-sh src/client/menu/bundle-macos.sh
+make menu
 ```
 
 With the default Cargo target directory, open the app from Finder or run:
@@ -91,9 +93,10 @@ the menu client directly from a terminal, use `cargo run --release -- --menu`.
 
 ### Run the Linux menu client
 
-On Linux, run `ngai-tunes --menu` from a desktop session with a
-StatusNotifierItem host. If the process runs but no icon appears, check for
-a host on the session bus.
+On Linux, `make menu` builds the release binary. Run
+`./target/release/ngai-tunes --menu` from a desktop session with a
+StatusNotifierItem host. If the process runs but no icon appears, check for a
+host on the session bus.
 
 ```sh
 busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
