@@ -166,7 +166,7 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         .and_then(|store| store.load().ok())
         .unwrap_or_default();
     let (tracks, mut queue, error) = restore_queue(config)?;
-    let mut controller = Controller::new(engine, settings.repeat, tracks, queue.saved_index);
+    let mut controller = Controller::new(engine, settings.server.repeat, tracks, queue.saved_index);
     if let Some(error) = error {
         controller.set_error(error);
     }

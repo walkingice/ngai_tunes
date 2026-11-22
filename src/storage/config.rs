@@ -9,26 +9,45 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub server: ServerConfig,
+    pub tui: TuiConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerConfig {
+    pub repeat: Repeat,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            repeat: Repeat::Off,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TuiConfig {
     pub info_seconds: u64,
     pub warning_seconds: u64,
     pub error_seconds: u64,
     pub scan_directories: Vec<String>,
-    pub repeat: Repeat,
     #[serde(skip_serializing_if = "ScannedPosition::is_default")]
     pub scanned: ScannedPosition,
 }
 
-impl Default for Config {
+impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             info_seconds: 5,
             warning_seconds: 5,
             error_seconds: 10,
             scan_directories: Vec::new(),
-            repeat: Repeat::Off,
             scanned: ScannedPosition::default(),
         }
     }
@@ -192,40 +211,41 @@ impl ConfigStore {
         }
     }
 
-    pub fn save_if_unchanged(&self, original: &Config, config: &Config) -> io::Result<()> {
+    pub fn save_tui_if_unchanged(
+        &self,
+        original: &TuiConfig,
+        config: &TuiConfig,
+    ) -> io::Result<()> {
         let _lock = self.lock()?;
         let mut current = self.load()?;
-        // The daemon owns repeat mode and can update it while a client is open.
-        let repeat = current.repeat;
-        let scanned = current.scanned;
-        current.repeat = original.repeat;
-        current.scanned = original.scanned;
-        if current != *original {
+        // Cursor changes from other clients are independent of TUI settings edits.
+        let scanned = current.tui.scanned;
+        current.tui.scanned = original.scanned;
+        if current.tui != *original {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "Config changed in another client; restart to reload it",
             ));
         }
-        let mut config = config.clone();
-        config.repeat = repeat;
-        config.scanned = scanned;
-        self.save(&config)
+        current.tui = config.clone();
+        current.tui.scanned = scanned;
+        self.save(&current)
     }
 
     pub fn save_repeat(&self, repeat: Repeat) -> io::Result<()> {
         let _lock = self.lock()?;
         let mut config = self.load()?;
-        config.repeat = repeat;
+        config.server.repeat = repeat;
         self.save(&config)
     }
 
     pub fn save_scanned(&self, scanned: ScannedPosition) -> io::Result<()> {
         let _lock = self.lock()?;
         let mut config = self.load()?;
-        if config.scanned == scanned {
+        if config.tui.scanned == scanned {
             return Ok(());
         }
-        config.scanned = scanned;
+        config.tui.scanned = scanned;
         self.save(&config)
     }
 
@@ -310,43 +330,45 @@ mod tests {
     fn rejects_stale_updates() {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path().join("config.json"));
-        let original = store.load().unwrap();
+        let original = store.load().unwrap().tui;
         let mut first = original.clone();
         first.scan_directories.push("/first".into());
-        store.save_if_unchanged(&original, &first).unwrap();
+        store.save_tui_if_unchanged(&original, &first).unwrap();
         let mut stale = original.clone();
         stale.scan_directories.push("/second".into());
         assert_eq!(
             store
-                .save_if_unchanged(&original, &stale)
+                .save_tui_if_unchanged(&original, &stale)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::AlreadyExists
         );
-        assert_eq!(store.load().unwrap(), first);
+        assert_eq!(store.load().unwrap().tui, first);
     }
 
     #[test]
-    fn reads_old_config_and_round_trips_scan_directories() {
+    fn loads_partial_sections_and_round_trips_scan_directories() {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path().join("nested/config.json"));
-        assert!(store.load().unwrap().scan_directories.is_empty());
+        assert!(store.load().unwrap().tui.scan_directories.is_empty());
         fs::create_dir_all(dir.path().join("nested")).unwrap();
-        fs::write(&store.path, r#"{"info_seconds":1}"#).unwrap();
+        fs::write(&store.path, r#"{"tui":{"info_seconds":1}}"#).unwrap();
         let mut config = store.load().unwrap();
-        assert_eq!(config.repeat, Repeat::Off);
-        config.scan_directories.push("/music/音樂".into());
+        assert_eq!(config.server.repeat, Repeat::Off);
+        config.tui.scan_directories.push("/music/音樂".into());
         store.save(&config).unwrap();
         let loaded = store.load().unwrap();
-        assert_eq!(loaded.info_seconds, 1);
-        assert_eq!(loaded.scan_directories, ["/music/音樂"]);
+        assert_eq!(loaded.tui.info_seconds, 1);
+        assert_eq!(loaded.tui.warning_seconds, 5);
+        assert_eq!(loaded.tui.error_seconds, 10);
+        assert_eq!(loaded.tui.scan_directories, ["/music/音樂"]);
     }
 
     #[test]
     fn scanned_updates_preserve_settings_and_omit_default_positions() {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path().join("config.json"));
-        let original = store.load().unwrap();
+        let original = store.load().unwrap().tui;
         store.save_scanned(ScannedPosition::default()).unwrap();
         assert!(!store.path.exists());
 
@@ -361,54 +383,57 @@ mod tests {
         store.save_scanned(scanned).unwrap();
         let mut updated = original.clone();
         updated.scan_directories.push("/music".into());
-        store.save_if_unchanged(&original, &updated).unwrap();
+        store.save_tui_if_unchanged(&original, &updated).unwrap();
         store.save_repeat(Repeat::All).unwrap();
         let saved = store.load().unwrap();
-        assert_eq!(saved.scanned, scanned);
-        assert_eq!(saved.scan_directories, ["/music"]);
-        assert_eq!(saved.repeat, Repeat::All);
+        assert_eq!(saved.tui.scanned, scanned);
+        assert_eq!(saved.tui.scan_directories, ["/music"]);
+        assert_eq!(saved.server.repeat, Repeat::All);
         let json = serde_json::to_value(saved).unwrap();
+        assert_eq!(json.as_object().unwrap().len(), 2);
+        assert_eq!(json["server"], serde_json::json!({"repeat": "All"}));
         assert_eq!(
-            json["scanned"],
+            json["tui"]["scanned"],
             serde_json::json!({"artist": {"cursor": 2}, "song": 3})
         );
 
         store.save_scanned(ScannedPosition::default()).unwrap();
         let json: serde_json::Value =
             serde_json::from_slice(&fs::read(&store.path).unwrap()).unwrap();
-        assert!(json.get("scanned").is_none());
+        assert!(json["tui"].get("scanned").is_none());
     }
 
     #[test]
     fn malformed_scanned_indices_default_independently() {
         let config: Config = serde_json::from_str(
-            r#"{"scanned":{"genre":{"cursor":-1,"selected":2},"song":"bad"}}"#,
+            r#"{"tui":{"scanned":{"genre":{"cursor":-1,"selected":2},"song":"bad"}}}"#,
         )
         .unwrap();
         assert_eq!(
-            config.scanned.genre,
+            config.tui.scanned.genre,
             FilterPosition {
                 cursor: 0,
                 selected: 2
             }
         );
-        assert_eq!(config.scanned.song, 0);
+        assert_eq!(config.tui.scanned.song, 0);
     }
 
     #[test]
     fn scan_settings_and_repeat_updates_preserve_each_other() {
         let dir = tempfile::tempdir().unwrap();
         let store = ConfigStore::new(dir.path().join("config.json"));
-        let original = store.load().unwrap();
+        let original = store.load().unwrap().tui;
         store.save_repeat(Repeat::All).unwrap();
         assert!(dir.path().join("runtime/config.lock").is_file());
         assert!(!dir.path().join("config.lock").exists());
         let mut updated = original.clone();
         updated.scan_directories.push("/music".into());
-        store.save_if_unchanged(&original, &updated).unwrap();
-        assert_eq!(store.load().unwrap().repeat, Repeat::All);
+        store.save_tui_if_unchanged(&original, &updated).unwrap();
+        assert_eq!(store.load().unwrap().server.repeat, Repeat::All);
         store.save_repeat(Repeat::One).unwrap();
-        updated.repeat = Repeat::One;
-        assert_eq!(store.load().unwrap(), updated);
+        let saved = store.load().unwrap();
+        assert_eq!(saved.server.repeat, Repeat::One);
+        assert_eq!(saved.tui, updated);
     }
 }

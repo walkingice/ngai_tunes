@@ -45,9 +45,9 @@ impl Level {
     }
 }
 
-use crate::storage::config::{Config, ConfigStore};
+use crate::storage::config::{ConfigStore, TuiConfig};
 
-impl Config {
+impl TuiConfig {
     fn duration(&self, level: Level) -> Duration {
         Duration::from_secs(match level {
             Level::Info => self.info_seconds,
@@ -67,14 +67,14 @@ enum ConfigLoad {
 }
 
 impl ConfigLoad {
-    fn load(store: io::Result<ConfigStore>) -> (Self, Config) {
+    fn load(store: io::Result<ConfigStore>) -> (Self, TuiConfig) {
         let store = match store {
             Ok(store) => store,
-            Err(error) => return (Self::Unavailable(error), Config::default()),
+            Err(error) => return (Self::Unavailable(error), TuiConfig::default()),
         };
         match store.load() {
-            Ok(config) => (Self::Loaded(store), config),
-            Err(error) => (Self::Failed { store, error }, Config::default()),
+            Ok(config) => (Self::Loaded(store), config.tui),
+            Err(error) => (Self::Failed { store, error }, TuiConfig::default()),
         }
     }
 
@@ -137,7 +137,7 @@ struct Notice {
 }
 
 impl Notice {
-    fn visible(&self, config: &Config) -> bool {
+    fn visible(&self, config: &TuiConfig) -> bool {
         self.created.elapsed() < config.duration(self.level)
     }
 }
@@ -183,7 +183,7 @@ struct App {
     snapshot: Option<Snapshot>,
     updated: Instant,
     info: Option<Notice>,
-    config: Config,
+    config: TuiConfig,
     page: Page,
     scroll_offsets: render::ScrollOffsets,
     library: Library,
@@ -685,7 +685,7 @@ impl App {
         }
     }
 
-    fn save_config(&mut self, config: Config) -> bool {
+    fn save_config(&mut self, config: TuiConfig) -> bool {
         let ConfigLoad::Loaded(store) = &self.config_load else {
             self.show_notice(
                 Level::Error,
@@ -693,7 +693,7 @@ impl App {
             );
             return false;
         };
-        let result = store.save_if_unchanged(&self.config, &config);
+        let result = store.save_tui_if_unchanged(&self.config, &config);
         match result {
             Ok(()) => {
                 self.config = config;
@@ -856,7 +856,7 @@ mod tests {
         app.save_library_position();
 
         let store = ConfigStore::new(path);
-        assert_eq!(store.load().unwrap().scanned, position);
+        assert_eq!(store.load().unwrap().tui.scanned, position);
         app.config_load = ConfigLoad::Loaded(store);
         app.library_loaded = false;
         app.config.scanned = ScannedPosition {
@@ -992,7 +992,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(None, Vec::new(), None);
         app.config_load = ConfigLoad::Loaded(ConfigStore::new(dir.path().join("config.json")));
-        app.config = Config::default();
+        app.config = TuiConfig::default();
         app.focus = Focus::Sidebar;
         app.key(KeyCode::Down);
         app.key(KeyCode::Down);
@@ -1021,6 +1021,7 @@ mod tests {
                 .unwrap()
                 .load()
                 .unwrap()
+                .tui
                 .scan_directories
                 .is_empty()
         );
@@ -1036,7 +1037,7 @@ mod tests {
         let mut app = App::new(None, Vec::new(), None);
         (app.config_load, app.config) = ConfigLoad::load(Ok(store));
         assert!(app.config_load.error().is_some());
-        assert_eq!(app.config, Config::default());
+        assert_eq!(app.config, TuiConfig::default());
 
         app.initialize();
         assert!(app.page == Page::Scanned);
@@ -1053,7 +1054,7 @@ mod tests {
         assert!(
             matches!(&app.scan_dialog, Some(ScanDialog::Edit { text, .. }) if text == "/music")
         );
-        assert_eq!(app.config, Config::default());
+        assert_eq!(app.config, TuiConfig::default());
         assert_eq!(std::fs::read(path).unwrap(), b"{");
 
         app.scan_dialog = Some(ScanDialog::ConfirmScan);
@@ -1153,7 +1154,7 @@ mod tests {
 
     #[test]
     fn notices_use_configured_durations_and_colors() {
-        let config: Config =
+        let config: TuiConfig =
             serde_json::from_str(r#"{"info_seconds":1,"warning_seconds":2,"error_seconds":3}"#)
                 .unwrap();
         for (level, seconds, color) in [
@@ -1176,7 +1177,7 @@ mod tests {
             );
             assert_eq!(level.color(), color);
         }
-        let defaults: Config = serde_json::from_str("{}").unwrap();
+        let defaults: TuiConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(defaults.duration(Level::Info), Duration::from_secs(5));
         assert_eq!(defaults.duration(Level::Warning), Duration::from_secs(5));
         assert_eq!(defaults.duration(Level::Error), Duration::from_secs(10));
@@ -1185,6 +1186,7 @@ mod tests {
     #[test]
     fn repeated_snapshot_error_does_not_refresh_notice() {
         let mut app = App::new(None, Vec::new(), None);
+        let startup_notice = app.info.as_ref().map(|notice| notice.created);
         let state = Snapshot {
             revision: 1,
             queue: Default::default(),
@@ -1202,7 +1204,10 @@ mod tests {
             error: None,
             state: Some(state),
         });
-        assert!(app.info.is_none());
+        assert_eq!(
+            app.info.as_ref().map(|notice| notice.created),
+            startup_notice
+        );
     }
 
     #[test]
