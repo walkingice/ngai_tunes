@@ -150,4 +150,4 @@ busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher 
 
 ## 開發
 
-另請參閱[規格](AGENTS.md)和[架構](docs/ARCH.md)。
+另請參閱[規格](docs/SPEC.md)和[架構](docs/ARCH.md)。

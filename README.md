@@ -160,4 +160,4 @@ needs a panel or extension that provides a StatusNotifierItem host.
 
 ## Development
 
-See the [specification](AGENTS.md) and [architecture](docs/ARCH.md).
+See the [specification](docs/SPEC.md) and [architecture](docs/ARCH.md).
