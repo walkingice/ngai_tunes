@@ -187,6 +187,7 @@ struct App {
     page: Page,
     scroll_offsets: render::ScrollOffsets,
     library: Library,
+    library_loaded: bool,
     library_load: Option<Receiver<io::Result<Library>>>,
     scan_cursor: usize,
     scan_dialog: Option<ScanDialog>,
@@ -218,6 +219,7 @@ impl App {
             config,
             config_load,
             library: Library::default(),
+            library_loaded: false,
             scroll_offsets: render::ScrollOffsets::default(),
             library_load: None,
             scan_cursor: 0,
@@ -243,6 +245,7 @@ impl App {
         let mut terminal = ratatui::try_init()?;
         let result = self.event_loop(&mut terminal);
         let restored = ratatui::try_restore();
+        self.save_library_position();
         result.and(restored)
     }
 
@@ -703,6 +706,19 @@ impl App {
         }
     }
 
+    fn save_library_position(&self) {
+        if self.library_loaded
+            && self.library_load.is_none()
+            && let ConfigLoad::Loaded(store) = &self.config_load
+        {
+            let position = self.library.position();
+            if position != self.config.scanned {
+                // Cursor persistence is best effort and must not prevent exit.
+                let _ = store.save_scanned(position);
+            }
+        }
+    }
+
     fn reload_library(&mut self) {
         let result = self
             .config_load
@@ -723,7 +739,13 @@ impl App {
             return;
         };
         match receiver.try_recv() {
-            Ok(Ok(library)) => self.library = library,
+            Ok(Ok(mut library)) => {
+                if !self.library_loaded {
+                    library.restore_position(self.config.scanned);
+                }
+                self.library = library;
+                self.library_loaded = true;
+            }
             Ok(Err(error)) => self.library_load_failed(error),
             Err(TryRecvError::Disconnected) => self.library_load_failed("loader disconnected"),
             Err(TryRecvError::Empty) => return,
@@ -733,6 +755,7 @@ impl App {
 
     fn library_load_failed(&mut self, error: impl std::fmt::Display) {
         self.library = Library::default();
+        self.library_loaded = false;
         self.show_notice(
             Level::Error,
             format!("Could not load database.jsonl: {error}"),
@@ -786,6 +809,74 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(app.library_load.is_none());
+    }
+
+    #[test]
+    fn scanned_position_round_trips_on_exit_and_defaults_invalid_indices() {
+        use crate::storage::config::{FilterPosition, ScannedPosition};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let store = ConfigStore::new(path.clone());
+        let mut writer = store.database().stage().unwrap();
+        for title in ["First", "Second"] {
+            writer
+                .write(&crate::storage::database::ScanTrack {
+                    path: dir.path().join(title),
+                    title: title.into(),
+                    duration_ms: None,
+                    artists: vec!["Artist".into()],
+                    album: Some("Album".into()),
+                    genres: vec!["Genre".into()],
+                    track_number: None,
+                })
+                .unwrap();
+        }
+        writer.publish().unwrap();
+        let mut app = App::new(None, Vec::new(), None);
+        (app.config_load, app.config) = ConfigLoad::load(Ok(store));
+        app.reload_library();
+        wait_for_library(&mut app);
+        for facet in Facet::ALL {
+            app.filter_key(facet, KeyCode::Down);
+            app.filter_key(facet, KeyCode::Enter);
+        }
+        app.filter_key(Facet::Artist, KeyCode::Up);
+        app.page = Page::Scanned;
+        app.main_key(KeyCode::Down);
+        let position = app.library.position();
+        assert_eq!(
+            position.artist,
+            FilterPosition {
+                cursor: 0,
+                selected: 1
+            }
+        );
+        assert_eq!(position.song, 1);
+        assert!(!path.exists());
+        app.save_library_position();
+
+        let store = ConfigStore::new(path);
+        assert_eq!(store.load().unwrap().scanned, position);
+        app.config_load = ConfigLoad::Loaded(store);
+        app.library_loaded = false;
+        app.config.scanned = ScannedPosition {
+            album: FilterPosition {
+                cursor: 99,
+                selected: 99,
+            },
+            song: 99,
+            ..position
+        };
+        app.reload_library();
+        wait_for_library(&mut app);
+        assert_eq!(
+            app.library.position(),
+            ScannedPosition {
+                album: FilterPosition::default(),
+                song: 0,
+                ..position
+            }
+        );
     }
 
     #[test]

@@ -1,6 +1,9 @@
 use crate::{
     protocol::Track,
-    storage::database::{Database, ScanTrack},
+    storage::{
+        config::{FilterPosition, ScannedPosition},
+        database::{Database, ScanTrack},
+    },
 };
 use std::{collections::BTreeSet, io, sync::mpsc, thread};
 
@@ -121,6 +124,34 @@ impl Library {
         }
     }
 
+    pub(super) fn position(&self) -> ScannedPosition {
+        let [genre, artist, album] = self.filters.each_ref().map(|filter| FilterPosition {
+            cursor: filter.cursor,
+            selected: filter.selected,
+        });
+        ScannedPosition {
+            genre,
+            artist,
+            album,
+            song: self.cursor,
+        }
+    }
+
+    pub(super) fn restore_position(&mut self, position: ScannedPosition) {
+        for (facet, saved) in
+            Facet::ALL
+                .into_iter()
+                .zip([position.genre, position.artist, position.album])
+        {
+            let filter = self.filter_mut(facet);
+            filter.cursor = valid_index(saved.selected, filter.row_count());
+            self.apply(facet);
+            let filter = self.filter_mut(facet);
+            filter.cursor = valid_index(saved.cursor, filter.row_count());
+        }
+        self.cursor = valid_index(position.song, self.songs.len());
+    }
+
     pub fn reset_filters(&mut self) {
         for filter in &mut self.filters {
             filter.cursor = 0;
@@ -150,6 +181,10 @@ impl Library {
         self.songs = tracks.into_iter().map(to_song).collect();
         self.cursor = 0;
     }
+}
+
+fn valid_index(index: usize, len: usize) -> usize {
+    if index < len { index } else { 0 }
 }
 
 fn to_song(track: &ScanTrack) -> Track {

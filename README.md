@@ -53,7 +53,10 @@ Press uppercase `T` to focus Tabs, then Up/Down to select Settings and Enter
 to open it. Press Tab from Tabs to return to Main.
 Select a directory path to edit it, or select its Delete button to confirm
 removal. Add directory creates a target. The Scan button asks for confirmation; scanning is not implemented yet.
-Targets are saved in `config.json` under `scan_directories`.
+Targets are saved in `config.json` under `scan_directories`. When the TUI exits,
+it saves changed Scanned filter and song positions under `scanned`. On
+reopening, invalid positions fall back to All for filters and the first row
+for songs.
 
 In Scanned, Tab cycles from the song list through the filters and Playback.
 Press uppercase `R` to reset all filters to `All`.
