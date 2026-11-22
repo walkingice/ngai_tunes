@@ -497,19 +497,23 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct Silent;
+    struct Silent {
+        position: Duration,
+    }
 
     impl Engine for Silent {
         fn start(&mut self, _: &Path, _: u64) -> Result<Option<Duration>, StartError> {
+            self.position = Duration::ZERO;
             Ok(Some(Duration::from_secs(30)))
         }
         fn pause(&mut self, _: bool) {}
         fn stop(&mut self) {}
-        fn seek(&mut self, _: Duration) -> Result<(), String> {
+        fn seek(&mut self, position: Duration) -> Result<(), String> {
+            self.position = position;
             Ok(())
         }
         fn position(&self) -> Duration {
-            Duration::ZERO
+            self.position
         }
         fn event(&mut self) -> Option<Event> {
             None
@@ -671,7 +675,8 @@ mod tests {
         let runtime = Runtime::bind(&directory).unwrap();
         let socket = directory.join("daemon.sock");
         let config = ConfigStore::new(root.path().join("config.json"));
-        let server = thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap());
+        let server =
+            thread::spawn(move || serve(runtime, Silent::default(), Some(&config)).unwrap());
         let peer = || test_peer(&socket);
         let mut first = peer();
         let mut second = peer();
@@ -705,7 +710,7 @@ mod tests {
         let start = || {
             let runtime = Runtime::bind(&directory).unwrap();
             let config = ConfigStore::new(root.path().join("config.json"));
-            thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap())
+            thread::spawn(move || serve(runtime, Silent::default(), Some(&config)).unwrap())
         };
         let server = start();
         let mut peer = test_peer(&socket);
@@ -733,6 +738,19 @@ mod tests {
         server.join().unwrap();
     }
 
+    fn read_playback(peer: &mut TestPeer, id: Option<u64>) -> PlaybackSummary {
+        let frame = read_frame(&mut peer.stream).unwrap().unwrap();
+        let WireMessage::Playback {
+            request_id,
+            summary,
+        } = serde_json::from_slice(&frame).unwrap()
+        else {
+            panic!("Expected a playback-only frame");
+        };
+        assert_eq!(request_id, id);
+        summary
+    }
+
     #[test]
     fn large_queue_is_atomic_and_shared_with_new_subscribers() {
         let root = tempfile::tempdir().unwrap();
@@ -740,13 +758,28 @@ mod tests {
         let runtime = Runtime::bind(&directory).unwrap();
         let socket = directory.join("daemon.sock");
         let config = ConfigStore::new(root.path().join("config.json"));
-        let server = thread::spawn(move || serve(runtime, Silent, Some(&config)).unwrap());
+        let server =
+            thread::spawn(move || serve(runtime, Silent::default(), Some(&config)).unwrap());
         let mut observer = test_peer(&socket);
         observer.request(1, Command::Subscribe);
+        let mut menu = test_peer(&socket);
+        menu.write(
+            &encode(&Request {
+                version: VERSION,
+                request_id: 99,
+                command: Command::SubscribePlayback,
+            })
+            .unwrap(),
+        );
+        assert!(!read_playback(&mut menu, Some(99)).has_queue);
         let mut uploader = test_peer(&socket);
         let initial = encode_upload(1, &[track("Initial".into())], 0).unwrap();
         uploader.write(&initial[0]);
         assert!(uploader.reply(1).error.is_none());
+        assert_eq!(
+            read_playback(&mut menu, None).title.as_deref(),
+            Some("Initial")
+        );
 
         let queue: Vec<_> = (0..205)
             .map(|index| track(format!("{index} {}", "x".repeat(6000))))
@@ -781,6 +814,8 @@ mod tests {
         let broadcast = observer.read().state.unwrap();
         assert_eq!(*broadcast.queue, queue);
         assert_eq!(broadcast.current, Some(204));
+        let compact = read_playback(&mut menu, None);
+        assert_eq!(compact.title.as_ref(), Some(&queue[204].title));
 
         let mut attached = test_peer(&socket);
         let snapshot = attached.request(1, Command::Subscribe).state.unwrap();
@@ -790,7 +825,21 @@ mod tests {
         let updated = attached.read().state.unwrap();
         assert_eq!(updated.repeat, Repeat::One);
         assert!(Arc::ptr_eq(&snapshot.queue, &updated.queue));
-        attached.request(3, Command::Quit);
+        assert_eq!(read_playback(&mut menu, None).repeat, Repeat::One);
+        attached.request(3, Command::Previous);
+        assert_eq!(
+            read_playback(&mut menu, None).title.as_ref(),
+            Some(&queue[203].title)
+        );
+        assert_eq!(attached.read().state.unwrap().current, Some(203));
+        attached.request(4, Command::Seek { position_ms: 500 });
+        assert_eq!(attached.read().state.unwrap().position_ms, 500);
+        // The seek acknowledgement and the subsequent mode update delimit
+        // the interval in which the menu must receive no position frames.
+        attached.request(5, Command::SetOrder(Order::Random));
+        let summary = read_playback(&mut menu, None);
+        assert_eq!(summary.order, Order::Random);
+        attached.request(6, Command::Quit);
         server.join().unwrap();
     }
 }

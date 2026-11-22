@@ -18,3 +18,15 @@ rodio = { version = "0.21", default-features = false, features = ["playback", "s
 fastrand = "2"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
+crossbeam-channel = "0.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = { version = "=0.26.1", default-features = false }
+tao = { version = "0.35", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "=0.26.1", default-features = false, features = ["ksni"] }
+
+[package.metadata.bundle.bin.ngai-tunes]
+name = "Ngai Tunes"
+identifier = "io.github.walkingice.ngai-tunes"

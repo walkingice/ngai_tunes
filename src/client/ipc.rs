@@ -1,95 +1,168 @@
 use crate::{
     daemon::runtime::{ROOT, SOCKET, verify_directory},
     protocol::{
-        Command, IncomingState, Message, Request, VERSION, encode, encode_upload, read_frame,
+        Command, IncomingState, Message, Request, VERSION, WireMessage, encode, encode_upload,
+        read_frame,
     },
 };
+use crossbeam_channel::{self as channel, Receiver};
 use std::{
     io::{self, BufReader, Write},
     os::unix::{net::UnixStream, process::CommandExt},
     path::Path,
     process::{Command as Process, Stdio},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::mpsc::TryRecvError,
     thread,
     time::{Duration, Instant},
 };
 
-pub struct Connection {
+pub struct Transport<T> {
     stream: UnixStream,
-    receiver: Receiver<Message>,
+    pub(super) receiver: Receiver<io::Result<T>>,
     id: u64,
 }
 
+pub type Connection = Transport<Message>;
+
 impl Connection {
     pub fn connect() -> io::Result<Self> {
-        verify_directory(Path::new(ROOT))?;
-        let stream = UnixStream::connect(SOCKET)?;
-        stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-        let mut reader = BufReader::new(stream.try_clone()?);
-        let (send, receiver) = mpsc::sync_channel(16);
-        thread::spawn(move || {
-            let mut state = IncomingState::default();
-            while let Ok(Some(line)) = read_frame(&mut reader) {
-                let Ok(wire) = serde_json::from_slice(&line) else {
-                    break;
-                };
-                let Ok(message) = state.receive(wire) else {
-                    break;
-                };
-                if let Some(message) = message
-                    && send.send(message).is_err()
-                {
-                    break;
-                }
-            }
-        });
-        let mut connection = Self {
-            stream,
-            receiver,
-            id: 0,
-        };
-        connection.send(Command::Subscribe)?;
-        Ok(connection)
+        let mut state = IncomingState::default();
+        Self::subscribe(Command::Subscribe, move |wire| {
+            state.receive(wire).map_err(io::Error::other)
+        })
     }
 
     pub fn start() -> io::Result<Self> {
-        // The subscription snapshot can span many frames. Do not wait for it
-        // before sending commands to an already bound daemon.
-        if let Ok(connection) = Self::connect() {
-            return Ok(connection);
+        start(Self::connect)
+    }
+
+    pub fn next(&mut self) -> Result<Message, TryRecvError> {
+        match self.receiver.try_recv() {
+            Ok(Ok(message)) => Ok(message),
+            Err(channel::TryRecvError::Empty) => Err(TryRecvError::Empty),
+            _ => Err(TryRecvError::Disconnected),
         }
-        let mut process = Process::new(std::env::current_exe()?);
-        process
-            .arg("--detached-child")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        // setsid is async-signal-safe and detaches the child from the TUI.
-        unsafe {
-            process.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
+    }
+
+    pub fn finish(&mut self, command: Command) {
+        let Ok(id) = self.send(command) else { return };
+        let deadline = Instant::now() + Duration::from_millis(350);
+        while let Ok(Ok(message)) = self.receiver.recv_deadline(deadline) {
+            if message.request_id == Some(id) || Instant::now() >= deadline {
+                break;
+            }
+        }
+    }
+}
+
+pub(super) fn open_socket() -> io::Result<UnixStream> {
+    verify_directory(Path::new(ROOT))?;
+    let stream = UnixStream::connect(SOCKET)?;
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    Ok(stream)
+}
+
+pub(super) fn is_offline(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    )
+}
+
+pub(super) fn start<T>(connect: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    start_with(connect, launch)
+}
+
+pub(super) fn start_with<T>(
+    mut connect: impl FnMut() -> io::Result<T>,
+    launch: impl FnOnce() -> io::Result<()>,
+) -> io::Result<T> {
+    match connect() {
+        Err(error) if is_offline(&error) => {}
+        result => return result,
+    }
+    launch()?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match connect() {
+            Err(error) if is_offline(&error) => {}
+            result => return result,
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Server did not become ready",
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn launch() -> io::Result<()> {
+    let mut process = Process::new(std::env::current_exe()?);
+    process
+        .arg("--detached-child")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // setsid is async-signal-safe and detaches the child from the client.
+    unsafe {
+        process.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = process.spawn()?;
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+impl<T: Send + 'static> Transport<T> {
+    pub(super) fn subscribe(
+        command: Command,
+        decode: impl FnMut(WireMessage) -> io::Result<Option<T>> + Send + 'static,
+    ) -> io::Result<Self> {
+        let mut connection = Self::open(decode)?;
+        connection.send(command)?;
+        Ok(connection)
+    }
+
+    pub(super) fn open(
+        decode: impl FnMut(WireMessage) -> io::Result<Option<T>> + Send + 'static,
+    ) -> io::Result<Self> {
+        Self::from_stream(open_socket()?, decode)
+    }
+
+    pub(super) fn from_stream(
+        stream: UnixStream,
+        mut decode: impl FnMut(WireMessage) -> io::Result<Option<T>> + Send + 'static,
+    ) -> io::Result<Self> {
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let (send, receiver) = channel::bounded(16);
+        thread::spawn(move || {
+            let result = (|| -> io::Result<()> {
+                while let Some(line) = read_frame(&mut reader)? {
+                    if let Some(message) = decode(serde_json::from_slice(&line)?)?
+                        && send.send(Ok(message)).is_err()
+                    {
+                        break;
+                    }
                 }
                 Ok(())
-            });
-        }
-        let mut child = process.spawn()?;
-        thread::spawn(move || {
-            let _ = child.wait();
+            })();
+            if let Err(error) = result {
+                let _ = send.send(Err(error));
+            }
         });
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if let Ok(connection) = Self::connect() {
-                return Ok(connection);
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Daemon did not become ready",
-                ));
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
+        Ok(Self {
+            stream,
+            receiver,
+            id: 0,
+        })
     }
 
     pub fn send(&mut self, command: Command) -> io::Result<u64> {
@@ -108,27 +181,50 @@ impl Connection {
         }
         Ok(self.id)
     }
+}
 
-    pub fn next(&mut self) -> Result<Message, TryRecvError> {
-        self.receiver.try_recv()
-    }
-
-    pub fn finish(&mut self, command: Command) {
-        let Ok(id) = self.send(command) else { return };
-        let deadline = Instant::now() + Duration::from_millis(350);
-        while let Ok(message) = self
-            .receiver
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        {
-            if message.request_id == Some(id) || Instant::now() >= deadline {
-                break;
-            }
-        }
+impl<T> Drop for Transport<T> {
+    fn drop(&mut self) {
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
     }
 }
 
-impl Drop for Connection {
-    fn drop(&mut self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn play_probes_before_launching_and_waits_for_readiness() {
+        for appeared in [false, true] {
+            let probes = Cell::new(0);
+            let launched = Cell::new(0);
+            let ready = start_with(
+                || {
+                    probes.set(probes.get() + 1);
+                    if appeared || launched.get() > 0 {
+                        Ok("ready")
+                    } else {
+                        Err(io::ErrorKind::NotFound.into())
+                    }
+                },
+                || {
+                    launched.set(launched.get() + 1);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(ready, "ready");
+            assert_eq!(launched.get(), usize::from(!appeared));
+            assert_eq!(probes.get(), 1 + launched.get());
+        }
+    }
+
+    #[test]
+    fn protocol_and_permission_failures_do_not_launch() {
+        for kind in [io::ErrorKind::InvalidData, io::ErrorKind::PermissionDenied] {
+            let result = start_with::<()>(|| Err(kind.into()), || panic!("unexpected launch"));
+            assert_eq!(result.unwrap_err().kind(), kind);
+        }
     }
 }
