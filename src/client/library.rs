@@ -66,6 +66,18 @@ impl Filter {
         self.values.len() + 1
     }
 
+    fn replace_values(&mut self, values: Vec<String>) {
+        let find_row = |row: usize| {
+            let value = self.values.get(row.checked_sub(1)?)?;
+            values.binary_search(value).ok().map(|index| index + 1)
+        };
+        self.selected = find_row(self.selected).unwrap_or(0);
+        if self.cursor != 0 {
+            self.cursor = find_row(self.cursor).unwrap_or(self.selected);
+        }
+        self.values = values;
+    }
+
     fn selected_value(&self) -> Option<&String> {
         self.selected
             .checked_sub(1)
@@ -85,22 +97,11 @@ pub fn load(database: Database) -> io::Result<mpsc::Receiver<io::Result<Library>
 
 impl Library {
     fn new(entries: Vec<ScanTrack>) -> Self {
-        let filters = Facet::ALL.map(|facet| Filter {
-            values: entries
-                .iter()
-                .flat_map(|track| facet.tags(track))
-                .cloned()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect(),
-            ..Filter::default()
-        });
         let mut library = Self {
             entries,
-            filters,
             ..Self::default()
         };
-        library.update_songs();
+        library.update_lists(0);
         library
     }
 
@@ -116,7 +117,7 @@ impl Library {
         let filter = self.filter_mut(facet);
         if filter.selected != filter.cursor {
             filter.selected = filter.cursor;
-            self.update_songs();
+            self.update_lists(facet.index() + 1);
         }
     }
 
@@ -125,22 +126,28 @@ impl Library {
             filter.cursor = 0;
             filter.selected = 0;
         }
-        self.update_songs();
+        self.update_lists(0);
     }
 
-    fn update_songs(&mut self) {
-        self.songs = self
-            .entries
-            .iter()
-            .filter(|track| {
-                Facet::ALL.into_iter().all(|facet| {
-                    self.filter(facet)
-                        .selected_value()
-                        .is_none_or(|value| facet.tags(track).contains(value))
-                })
-            })
-            .map(to_song)
-            .collect();
+    fn update_lists(&mut self, rebuild_from: usize) {
+        let mut tracks: Vec<_> = self.entries.iter().collect();
+        for (index, facet) in Facet::ALL.into_iter().enumerate() {
+            let filter = &mut self.filters[index];
+            if index >= rebuild_from {
+                let values = tracks
+                    .iter()
+                    .flat_map(|track| facet.tags(track))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                filter.replace_values(values);
+            }
+            if let Some(value) = filter.selected_value() {
+                tracks.retain(|track| facet.tags(track).contains(value));
+            }
+        }
+        self.songs = tracks.into_iter().map(to_song).collect();
         self.cursor = 0;
     }
 }
@@ -214,6 +221,59 @@ mod tests {
         assert!(library.filters.iter().all(|filter| {
             filter.selected == 0 && filter.cursor == 0 && !filter.values.is_empty()
         }));
+    }
+
+    #[test]
+    fn scopes_options_downstream_and_remaps_selections() {
+        let mut library = Library::new(vec![
+            track("First", &["Jazz"], &["B"], "Y"),
+            track("Second", &["Jazz"], &["C"], "Z"),
+            track("Third", &["Pop"], &["A"], "X"),
+        ]);
+
+        library.filter_mut(Facet::Artist).cursor = 2;
+        library.apply(Facet::Artist);
+        assert_eq!(library.filter(Facet::Genre).values, ["Jazz", "Pop"]);
+        assert_eq!(library.filter(Facet::Artist).values, ["A", "B", "C"]);
+        assert_eq!(library.filter(Facet::Album).values, ["Y"]);
+        library.filter_mut(Facet::Album).cursor = 1;
+        library.apply(Facet::Album);
+
+        library.filter_mut(Facet::Genre).cursor = 1;
+        library.apply(Facet::Genre);
+        let artist = library.filter(Facet::Artist);
+        assert_eq!(artist.values, ["B", "C"]);
+        assert_eq!((artist.selected, artist.cursor), (1, 1));
+        assert_eq!(library.filter(Facet::Album).selected, 1);
+        assert_eq!(library.songs[0].title, "First");
+
+        library.filter_mut(Facet::Artist).cursor = 0;
+        library.apply(Facet::Artist);
+        assert_eq!(library.filter(Facet::Album).values, ["Y", "Z"]);
+        library.filter_mut(Facet::Album).cursor = 2;
+        library.apply(Facet::Album);
+        assert_eq!(library.filter(Facet::Album).values, ["Y", "Z"]);
+        assert_eq!(library.filter(Facet::Artist).values, ["B", "C"]);
+        assert_eq!(library.filter(Facet::Genre).selected, 1);
+        assert_eq!(library.songs.len(), 1);
+        assert_eq!(library.songs[0].title, "Second");
+
+        library.filter_mut(Facet::Artist).cursor = 2;
+        library.apply(Facet::Artist);
+        library.filter_mut(Facet::Genre).cursor = 2;
+        library.apply(Facet::Genre);
+        for facet in [Facet::Artist, Facet::Album] {
+            let filter = library.filter(facet);
+            assert_eq!((filter.selected, filter.cursor), (0, 0));
+        }
+        assert_eq!(library.filter(Facet::Artist).values, ["A"]);
+        assert_eq!(library.filter(Facet::Album).values, ["X"]);
+        assert_eq!(library.songs[0].title, "Third");
+
+        library.reset_filters();
+        assert_eq!(library.filter(Facet::Artist).values, ["A", "B", "C"]);
+        assert_eq!(library.filter(Facet::Album).values, ["X", "Y", "Z"]);
+        assert_eq!(library.songs.len(), 3);
     }
 
     #[test]
