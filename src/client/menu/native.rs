@@ -34,8 +34,8 @@ struct Tray {
 impl Tray {
     fn new() -> Result<Self, Box<dyn Error>> {
         let menu = Menu::new();
-        let repeat = Submenu::new("Repeat", false);
-        let order = Submenu::new("Order", false);
+        let repeat = Submenu::new("↻ Repeat", false);
+        let order = Submenu::new("→ Order", false);
         let repeat_items = ["Off", "All", "One"].map(check_item);
         let order_items = ["Sequential", "Random"].map(check_item);
         for item in &repeat_items {
@@ -45,9 +45,9 @@ impl Tray {
             order.append(item)?;
         }
         let status = MenuItem::new("Connecting to server", false, None);
-        let play = MenuItem::new("Play", false, None);
-        let next = MenuItem::new("Next", false, None);
-        let previous = MenuItem::new("Previous", false, None);
+        let play = MenuItem::new("▶ Play", false, None);
+        let next = MenuItem::new("≫ Next", false, None);
+        let previous = MenuItem::new("≪ Previous", false, None);
         let exit = MenuItem::new("Exit", true, None);
         menu.append_items(&[&status, &play, &next, &previous, &repeat, &order, &exit])?;
         let builder = TrayIconBuilder::new()
@@ -63,7 +63,7 @@ impl Tray {
             menu,
             status,
             play,
-            pause: MenuItem::new("Pause", false, None),
+            pause: MenuItem::new("⏸ Pause", false, None),
             next,
             previous,
             exit,
@@ -97,8 +97,8 @@ impl Tray {
 
         let action = state.playback_action();
         let (active, hidden, label) = match action {
-            Action::Pause => (&self.pause, &self.play, "Pause"),
-            _ => (&self.play, &self.pause, "Play"),
+            Action::Pause => (&self.pause, &self.play, "⏸ Pause"),
+            _ => (&self.play, &self.pause, "▶ Play"),
         };
         self.row(hidden, None, position);
         self.row(active, Some(label), position);
@@ -112,6 +112,11 @@ impl Tray {
             .set_enabled(summary.is_some() && state.busy.is_none());
         self.order
             .set_enabled(summary.is_some() && state.busy.is_none());
+        self.order
+            .set_text(match summary.map(|summary| summary.order) {
+                Some(Order::Random) => "⤨ Order",
+                _ => "→ Order",
+            });
         self.exit.set_enabled(state.busy != Some("Stopping server"));
         self.state = state;
         self.apply_checks();
