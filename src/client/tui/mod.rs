@@ -185,6 +185,7 @@ struct App {
     info: Option<Notice>,
     config: Config,
     page: Page,
+    scroll_offsets: render::ScrollOffsets,
     library: Library,
     library_load: Option<Receiver<io::Result<Library>>>,
     scan_cursor: usize,
@@ -217,6 +218,7 @@ impl App {
             config,
             config_load,
             library: Library::default(),
+            scroll_offsets: render::ScrollOffsets::default(),
             library_load: None,
             scan_cursor: 0,
             scan_dialog: None,
@@ -1019,6 +1021,7 @@ mod tests {
             (1, Focus::Main, Color::Black, Color::Cyan),
             (0, Focus::Main, Color::Black, Color::Cyan),
             (15, Focus::Main, Color::Black, Color::Cyan),
+            (14, Focus::Main, Color::Black, Color::Cyan),
             (4, Focus::Main, Color::Black, Color::Cyan),
             (4, Focus::Playback, Color::White, Color::DarkGray),
             (4, Focus::Main, Color::Black, Color::Cyan),
@@ -1036,6 +1039,9 @@ mod tests {
                     line.contains(&title)
                 })
                 .expect("selected track should be visible");
+            if cursor == 14 || cursor == 15 {
+                assert_eq!(selected_row, 2 + (cursor - 14) as u16);
+            }
             for x in 14..99 {
                 if x > 14 && matches!(buffer[(x - 1, selected_row)].symbol(), "音" | "樂") {
                     continue;

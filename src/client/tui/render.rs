@@ -10,6 +10,33 @@ use ratatui::{
         Wrap,
     },
 };
+use std::cell::Cell as OffsetCell;
+
+#[derive(Default)]
+pub(super) struct ScrollOffsets {
+    pages: [OffsetCell<usize>; Page::TABS.len()],
+    facets: [OffsetCell<usize>; Facet::ALL.len()],
+}
+
+fn remember_offset(offset: &OffsetCell<usize>, render: impl FnOnce(usize) -> usize) {
+    offset.set(render(offset.get()));
+}
+
+fn render_scrolling_list(
+    frame: &mut Frame,
+    list: List<'_>,
+    area: Rect,
+    selected: Option<usize>,
+    offset: &OffsetCell<usize>,
+) {
+    remember_offset(offset, |offset| {
+        let mut state = ListState::default()
+            .with_offset(offset)
+            .with_selected(selected);
+        frame.render_stateful_widget(list, area, &mut state);
+        state.offset()
+    });
+}
 
 impl App {
     fn panel(&self, name: String, focus: Focus) -> Block<'static> {
@@ -140,10 +167,12 @@ impl App {
         let list = List::new(items)
             .block(self.panel("Recursive Scan Directories".into(), Focus::Main))
             .highlight_style(highlight);
-        frame.render_stateful_widget(
+        render_scrolling_list(
+            frame,
             list,
             area,
-            &mut ListState::default().with_selected(selected),
+            selected,
+            &self.scroll_offsets.pages[Page::Scan as usize],
         );
     }
 
@@ -198,7 +227,7 @@ impl App {
         let [facets, songs] =
             Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(area);
         let columns = Layout::horizontal([Constraint::Fill(1); Facet::ALL.len()]).split(facets);
-        for (facet, &column) in Facet::ALL.into_iter().zip(columns.iter()) {
+        for (index, (facet, &column)) in Facet::ALL.into_iter().zip(columns.iter()).enumerate() {
             let focus = Focus::Filter(facet);
             let filter = self.library.filter(facet);
             let items = filter.labels().enumerate().map(|(row, label)| {
@@ -208,8 +237,13 @@ impl App {
             let list = List::new(items)
                 .block(self.panel(facet.label().into(), focus))
                 .highlight_style(self.selection_style(focus));
-            let mut state = ListState::default().with_selected(Some(filter.cursor));
-            frame.render_stateful_widget(list, column, &mut state);
+            render_scrolling_list(
+                frame,
+                list,
+                column,
+                Some(filter.cursor),
+                &self.scroll_offsets.facets[index],
+            );
         }
         self.render_list(frame, songs);
     }
@@ -251,7 +285,6 @@ impl App {
                 Cell::from(track.genre.clone().unwrap_or_default()),
             ])
         });
-        let mut state = TableState::default().with_selected((!tracks.is_empty()).then_some(cursor));
         let time_width = tracks
             .iter()
             .filter_map(|track| track.duration_ms)
@@ -282,7 +315,12 @@ impl App {
             )
             .block(self.panel("Songs".into(), Focus::Main))
             .row_highlight_style(self.selection_style(Focus::Main));
-        frame.render_stateful_widget(table, area, &mut state);
+        remember_offset(&self.scroll_offsets.pages[self.page as usize], |offset| {
+            let mut state = TableState::default().with_offset(offset);
+            state.select((!tracks.is_empty()).then_some(cursor));
+            frame.render_stateful_widget(table, area, &mut state);
+            state.offset()
+        });
     }
 
     fn render_playback(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
@@ -420,6 +458,23 @@ mod tests {
             let buffer = terminal.backend().buffer();
             let title: String = (1..=5).map(|x| buffer[(x, 0)].symbol()).collect();
             assert_eq!(title, "Songs");
+        }
+    }
+
+    #[test]
+    fn settings_highlight_moves_before_scrolling_back() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.config.scan_directories = (0..10).map(|index| format!("/music/{index}")).collect();
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
+
+        for (cursor, row) in [(9, 4), (8, 3), (6, 1), (5, 1)] {
+            app.scan_cursor = cursor;
+            terminal
+                .draw(|frame| app.render_scan(frame, frame.area()))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let highlighted_row = (1..5).find(|&y| buffer[(1, y)].bg == Color::Cyan);
+            assert_eq!(highlighted_row, Some(row));
         }
     }
 
