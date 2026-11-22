@@ -1,7 +1,11 @@
-use crate::{daemon::runtime, protocol::Repeat};
+use crate::{
+    daemon::runtime,
+    protocol::{Repeat, Track},
+};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs, io,
+    fs,
+    io::{self, BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -50,6 +54,47 @@ impl ConfigStore {
 
     pub fn database(&self) -> super::database::Database {
         super::database::Database::new(self.path.with_file_name("database.jsonl"))
+    }
+
+    pub fn load_playing(&self) -> io::Result<Vec<Track>> {
+        let path = self.path.with_file_name("server_playing.jsonl");
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        BufReader::new(file)
+            .lines()
+            .map(|line| {
+                let track: Track = serde_json::from_str(&line?).map_err(io::Error::other)?;
+                if !track.path.is_absolute() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Playing queue needs absolute paths",
+                    ));
+                }
+                Ok(track)
+            })
+            .collect()
+    }
+
+    pub fn save_playing(&self, tracks: &[Track]) -> io::Result<()> {
+        let path = self.path.with_file_name("server_playing.jsonl");
+        let parent = path.parent().filter(|path| !path.as_os_str().is_empty());
+        let parent = parent.unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        {
+            let mut writer = BufWriter::new(file.as_file_mut());
+            for track in tracks {
+                serde_json::to_writer(&mut writer, track).map_err(io::Error::other)?;
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
+        }
+        file.as_file().sync_all()?;
+        file.persist(path).map_err(|error| error.error)?;
+        Ok(())
     }
 
     pub fn load(&self) -> io::Result<Config> {
@@ -114,7 +159,6 @@ impl ConfigStore {
                 Err(error) => return Err(error),
             }
         };
-        use std::io::Write;
         let result = file
             .write_all(&data)
             .and_then(|()| fs::rename(&temporary, &self.path));
@@ -132,6 +176,36 @@ fn tempfile_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playing_queue_round_trips_as_json_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConfigStore::new(dir.path().join("nested/config.json"));
+        assert!(store.load_playing().unwrap().is_empty());
+        let first = Track {
+            path: "/music/one.mp3".into(),
+            title: "One\nSong".into(),
+            artist: None,
+            album: None,
+            track_number: None,
+            duration_ms: None,
+            genre: None,
+        };
+        let second = Track {
+            path: "/music/two.flac".into(),
+            ..first.clone()
+        };
+        let tracks = [first, second];
+        store.save_playing(&tracks).unwrap();
+        let path = dir.path().join("nested/server_playing.jsonl");
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 2);
+        assert_eq!(store.load_playing().unwrap(), tracks);
+        store.save_playing(&[]).unwrap();
+        assert!(store.load_playing().unwrap().is_empty());
+        fs::write(path, "{\n").unwrap();
+        assert!(store.load_playing().is_err());
+    }
+
     #[test]
     fn rejects_stale_updates() {
         let dir = tempfile::tempdir().unwrap();
