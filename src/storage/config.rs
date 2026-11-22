@@ -17,6 +17,8 @@ pub struct Config {
     pub error_seconds: u64,
     pub scan_directories: Vec<String>,
     pub repeat: Repeat,
+    #[serde(skip_serializing_if = "ScannedPosition::is_default")]
+    pub scanned: ScannedPosition,
 }
 
 impl Default for Config {
@@ -27,8 +29,55 @@ impl Default for Config {
             error_seconds: 10,
             scan_directories: Vec::new(),
             repeat: Repeat::Off,
+            scanned: ScannedPosition::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ScannedPosition {
+    #[serde(skip_serializing_if = "FilterPosition::is_default")]
+    pub genre: FilterPosition,
+    #[serde(skip_serializing_if = "FilterPosition::is_default")]
+    pub artist: FilterPosition,
+    #[serde(skip_serializing_if = "FilterPosition::is_default")]
+    pub album: FilterPosition,
+    #[serde(deserialize_with = "read_index", skip_serializing_if = "is_zero")]
+    pub song: usize,
+}
+
+impl ScannedPosition {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct FilterPosition {
+    #[serde(deserialize_with = "read_index", skip_serializing_if = "is_zero")]
+    pub cursor: usize,
+    #[serde(deserialize_with = "read_index", skip_serializing_if = "is_zero")]
+    pub selected: usize,
+}
+
+impl FilterPosition {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn is_zero(index: &usize) -> bool {
+    *index == 0
+}
+
+fn read_index<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_u64()
+        .and_then(|index| index.try_into().ok())
+        .unwrap_or_default())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -148,7 +197,9 @@ impl ConfigStore {
         let mut current = self.load()?;
         // The daemon owns repeat mode and can update it while a client is open.
         let repeat = current.repeat;
+        let scanned = current.scanned;
         current.repeat = original.repeat;
+        current.scanned = original.scanned;
         if current != *original {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -157,6 +208,7 @@ impl ConfigStore {
         }
         let mut config = config.clone();
         config.repeat = repeat;
+        config.scanned = scanned;
         self.save(&config)
     }
 
@@ -164,6 +216,16 @@ impl ConfigStore {
         let _lock = self.lock()?;
         let mut config = self.load()?;
         config.repeat = repeat;
+        self.save(&config)
+    }
+
+    pub fn save_scanned(&self, scanned: ScannedPosition) -> io::Result<()> {
+        let _lock = self.lock()?;
+        let mut config = self.load()?;
+        if config.scanned == scanned {
+            return Ok(());
+        }
+        config.scanned = scanned;
         self.save(&config)
     }
 
@@ -278,6 +340,59 @@ mod tests {
         let loaded = store.load().unwrap();
         assert_eq!(loaded.info_seconds, 1);
         assert_eq!(loaded.scan_directories, ["/music/音樂"]);
+    }
+
+    #[test]
+    fn scanned_updates_preserve_settings_and_omit_default_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConfigStore::new(dir.path().join("config.json"));
+        let original = store.load().unwrap();
+        store.save_scanned(ScannedPosition::default()).unwrap();
+        assert!(!store.path.exists());
+
+        let scanned = ScannedPosition {
+            artist: FilterPosition {
+                cursor: 2,
+                selected: 0,
+            },
+            song: 3,
+            ..ScannedPosition::default()
+        };
+        store.save_scanned(scanned).unwrap();
+        let mut updated = original.clone();
+        updated.scan_directories.push("/music".into());
+        store.save_if_unchanged(&original, &updated).unwrap();
+        store.save_repeat(Repeat::All).unwrap();
+        let saved = store.load().unwrap();
+        assert_eq!(saved.scanned, scanned);
+        assert_eq!(saved.scan_directories, ["/music"]);
+        assert_eq!(saved.repeat, Repeat::All);
+        let json = serde_json::to_value(saved).unwrap();
+        assert_eq!(
+            json["scanned"],
+            serde_json::json!({"artist": {"cursor": 2}, "song": 3})
+        );
+
+        store.save_scanned(ScannedPosition::default()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&store.path).unwrap()).unwrap();
+        assert!(json.get("scanned").is_none());
+    }
+
+    #[test]
+    fn malformed_scanned_indices_default_independently() {
+        let config: Config = serde_json::from_str(
+            r#"{"scanned":{"genre":{"cursor":-1,"selected":2},"song":"bad"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.scanned.genre,
+            FilterPosition {
+                cursor: 0,
+                selected: 2
+            }
+        );
+        assert_eq!(config.scanned.song, 0);
     }
 
     #[test]
