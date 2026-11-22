@@ -6,15 +6,25 @@ continue after the terminal closes.
 
 ## Build
 
-Build from the repository root with Rust and Cargo. On Linux, install
-`pkg-config` and the ALSA development headers (`libasound2-dev` on Debian
-and Ubuntu, or `alsa-lib-devel` on Fedora). macOS uses Core Audio.
+Run the commands below from the repository root with Make, Rust, and Cargo.
+On Linux, install `pkg-config` and the ALSA development headers
+(`libasound2-dev` on Debian and Ubuntu, or `alsa-lib-devel` on Fedora).
+macOS uses Core Audio.
 
-```sh
-make build       # Release binary
-make debug       # Debug binary
-make help        # List all targets (also the default for make)
-```
+Run `make` to list the available targets. It prints the same help as
+`make help`.
+
+| Command | Result |
+| --- | --- |
+| `make build` | Build the release binary at `target/release/ngai-tunes`. |
+| `make debug` | Build the debug binary at `target/debug/ngai-tunes`. |
+| `make menu` | Package the macOS app or build the Linux release binary. See [Menu client](#menu-client) for setup and launch instructions. |
+| `make test` | Run the test suite. |
+| `make check` | Check all Cargo targets. |
+| `make fmt` | Format Rust code. |
+| `make fmt-check` | Check Rust formatting. |
+
+The binary paths assume the default Cargo target directory.
 
 ## Usage
 
