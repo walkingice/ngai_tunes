@@ -2,8 +2,7 @@
 
 ## Project documentation
 
-See the [UI style guidelines](docs/STYLE.md) for rendering conventions and the
-[refactoring guide](docs/REFACTORING.md) for proposed maintenance work.
+See the [UI style guidelines](docs/STYLE.md) for rendering conventions.
 
 ## SPEC
 

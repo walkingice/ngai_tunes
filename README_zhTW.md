@@ -1,17 +1,26 @@
-# ngai_tunes
+# 介紹
 
 [English](README.md) · 繁體中文
 
-ngai_tunes 是一款適用於 Linux 和 macOS 的鍵盤操作式 MP3 和 FLAC 播放器。
-終端機與選單用戶端共用同一個本機 daemon，因此關閉終端機後，音樂仍可繼續播放。
+**ngai_tunes** 是一款適用於 Linux 和 macOS 的簡易音樂播放器，支援 MP3 與 FLAC。
+
+目標：
+    - 極簡的操作介面，減少記憶體使用量，適合整天使用
+    - Client-Server 架構，Server 在背景播放音樂時，可以關閉 Client 減少記憶體用量
+    - TUI 介面與豐富的熱鍵，適合熱愛鍵盤操作者
+    - 有簡易的 Menu bar client 操縱 Server 的 playback
+
+非目標：
+    - ID3 tag 編輯
+    - 音樂檔案管理
 
 ## 編譯
 
-請在專案根目錄使用 Make、Rust 和 Cargo 執行下列指令。Linux 需要安裝
-`pkg-config` 與 ALSA 開發用標頭檔（Debian 和 Ubuntu 使用 `libasound2-dev`，
-Fedora 使用 `alsa-lib-devel`）。macOS 使用 Core Audio。
+請在專案根目錄使用 Make、Rust 和 Cargo 執行下列指令macOS 使用 Core Audio。
+Linux 需要安裝 `pkg-config` 與 ALSA 開發用標頭檔（Debian 和 Ubuntu 使用
+`libasound2-dev`，Fedora 使用 `alsa-lib-devel`）。
 
-執行 `make` 即可列出可用的目標，輸出與 `make help` 相同。
+執行 `make help` 即可列出可用的目標。
 
 | 指令 | 用途 |
 | --- | --- |
@@ -27,16 +36,64 @@ Fedora 使用 `alsa-lib-devel`）。macOS 使用 Core Audio。
 
 ## 使用方式
 
+以下是指令簡介
+
 ```sh
-./target/release/ngai-tunes               # 連線到目前的播放佇列
-./target/release/ngai-tunes --attach      # 明確指定連線到目前的播放佇列
-./target/release/ngai-tunes .             # 掃描目前的工作目錄
-./target/release/ngai-tunes ~/Music/Jazz  # 掃描指定目錄
-./target/release/ngai-tunes --daemon      # 在前景執行 daemon
-./target/release/ngai-tunes --menu        # 開啟原生選單的播放控制
+$ ngai-tunes               # 連線到目前的播放佇列
+$ ngai-tunes --attach      # 同上
+$ ngai-tunes ~/Music/Jazz  # 播放此目錄內的音樂檔
+
+# 通常不需要使用以下的功能，啟動 daemon 可以交由 client。
+$ ngai-tunes --daemon      # 在前景執行 daemon
+$ ngai-tunes --menu        # 開啟原生選單的播放控制
 ```
 
-指定目錄時會開啟 Browsing。未指定目錄時，如果設定目錄內有 `database.jsonl`，
+最簡單的使用方式為 `$ nagi-tunes /path/to/music/dir` 來播放某個目錄底下的檔案
+
+最推薦的方式是先掃描存放音樂檔案的目錄，建立資料索引之後，在 `Scanned` 頁面裡選擇要播放的檔案。
+每次音樂檔案有變動時，再次執行 Scan 即可更新索引。
+
+所有設定檔都放在 `~/.local/ngai_tunes/` 之下
+
+### TUI Client
+
+![TUI Client](docs/imgs/scanned_tab.jpg)
+
+預設有三個 Tab，執行時若指定目錄時會多一個 **Browsing** tab。
+
+- Playing tab：Serve 正在播放的曲目清單，
+- Scanned tab：被掃描的資料庫索引的曲目清單
+- Settings tab：設定頁面，可以在這邊進行頁面掃描
+
+常用熱鍵(區分大小寫)如下，畫面最下方還有更多熱鍵說明
+
+- `<TAB>`：切換焦點
+- `T`： 切換焦點到 Tab
+- `<SPACE>`：Pause or Resume 音樂播放
+- `<Enter>`：把正在觀看的曲目列表送給 Server (也就是變成 **Playing**)，並從頭播放目前聚焦的曲目
+- `<ESC>`：關閉 TUI Client 但是不停止播放
+- `q`：暫停播放，或是完全關閉程式
+
+初次使用，建議進行以下步驟
+
+1. 執行 `ngai-tunes` 進入 TUI 介面
+1. 按下 `T` 切換焦點到 **Tabs panel**，選擇 **Settings tab**
+    - 在裡面新增你存放音樂檔案的路徑，然後按下 **Scan**
+        - 程式會在 config 目錄底下，建立 `database.jsonl` 檔案
+1. 按下 `T` 切換焦點到 **Tabs panel**，選擇 **Scanned tab**
+    - 用 `<Tab>` 切換焦點到上方，在 `Genres` 或 `Artists` panel 裡面選擇你想過濾的條件
+    - 用 `<Tab>` 切換焦點到 **Songs panel**，按下 `<Enter>` 決定要播放哪一首
+        - Client 會自動啟動 Server
+        - Server 開始播放剛剛選擇的音樂
+        - 同時當下的歌曲清單會被送到 **Playing** tab 與 server
+1. 按下 `<Esc>` 關閉 Client，此時 Server 繼續播放音樂
+1. 再次執行 `ngai-tunes` 回到 TUI 介面
+1. 按下 `q` 鍵，Server 停止播放
+1. 再次按下 `q` 鍵或 `<ESC>`，完全關閉程式
+    - 只要離開 TUI 介面時沒有播放音樂，便會自動關閉 Server
+
+
+。未指定目錄時，如果設定目錄內有 `database.jsonl`，
 就會開啟 Scanned，否則會開啟 Playing。Playing 會顯示 daemon 的播放佇列。
 如果 daemon 未執行，佇列會是空的。此時若未指定目錄啟動，畫面底部也會顯示提示。
 
@@ -46,38 +103,15 @@ Fedora 使用 `alsa-lib-devel`）。macOS 使用 Core Audio。
 `q` 會停止播放。停止後再按 `q` 會關閉用戶端並結束 daemon。
 關閉重複播放時，daemon 會在播完佇列後結束。
 
-在 Playing 中，播放或暫停時可用左右方向鍵快轉或倒轉五秒。Vim 按鍵
-`h`、`j`、`k`、`l` 分別對應左、下、上、右。按 Tab 可在主區域和 Playback
-之間切換焦點。在 Playback 按 Enter 可停止播放，或從頭播放保留的曲目。
-按大寫 `P` 可將焦點移到 Playback，按大寫 `S` 可移到目前顯示的歌曲清單。
+### Menu Client
 
-按 `n` 播放下一首，按 `N` 或 `p` 播放上一首。左右方向鍵可快轉或倒轉五秒。
-按 `r` 循環切換重複模式，按 `o` 切換播放順序。單曲重複會在曲目自然播完時
-生效。手動切換上一首或下一首時會依照目前的播放順序。隨機播放時，上一首會依照
-本輪的隨機順序往回播放。關閉重複播放時，daemon 會在本輪結束後離開。全部重複
-則會重新隨機排序並開始下一輪。
+![Menu Client](docs/imgs/menu_client.jpg)
 
-按大寫 `T` 將焦點移到 Tabs，再用上下方向鍵選取 Settings，並按 Enter 開啟。
-在 Tabs 按 Tab 可回到主區域。選取目錄路徑可編輯，選取 Delete 可確認刪除，
-選取 Add directory 可新增掃描目錄。選取 Scan 並確認後會重建音樂資料庫。掃描成功時，
-Scanned 會重新載入。
+目前 Menu client 僅作為 TUI Client 的輔助。在 TUI Client 裡面翻找出你想聽的曲目，送給 Server 之後。你可以透過 Menu client 對 Server 當時持有的曲目清單，做簡易地操作。換句話說，Menu Client 僅有 TUI Client 裡面的 Playback panel 的功能。
 
-掃描目錄儲存在 `config.json` 的 `tui.scan_directories`。TUI 結束時，會將
-Scanned 中有變更的篩選器和歌曲游標位置存入 `tui.scanned`。重新開啟時，無效的
-篩選位置會回到 All，無效的歌曲位置會回到第一列。
+---
 
-在 Scanned 中，按 Tab 可從歌曲清單依序切換至各篩選器及 Playback，再回到歌曲清單。
-按大寫 `R` 可將所有篩選器重設為 `All`。
-
-另請參閱[規格](AGENTS.md)和[架構](docs/ARCH.md)。
-
-## 選單用戶端
-
-選單用戶端可以獨立於 TUI 啟動。daemon 離線時，**Play** 會啟動 daemon，並播放
-已儲存佇列中選取的曲目。佇列為空時，可透過 TUI 加入歌曲。**Exit** 會結束
-daemon 並關閉選單用戶端。已開啟的 TUI 仍可繼續使用。
-
-### 編譯 macOS 選單列 app
+編譯 macOS menu app
 
 先安裝 [cargo-bundle]，再從專案根目錄執行 `make menu`。
 這會編譯 release 版並打包成 `Ngai Tunes.app`。
@@ -87,16 +121,21 @@ cargo install --locked cargo-bundle --version 0.12.0
 make menu
 ```
 
-使用 Cargo 的預設輸出目錄時，可從 Finder 開啟 app，或執行下列指令。
+接著可以在終端機執行 `cargo run --release -- --menu`，直接啟動選單用戶端。
+
+或著，使用 Cargo 的預設輸出目錄時，可從 Finder 開啟 app，或執行下列指令。
 
 ```sh
 open "target/release/bundle/osx/Ngai Tunes.app"
 ```
 
-點選選單列上的音符圖示即可開啟播放控制。也可以在終端機執行
-`cargo run --release -- --menu`，直接啟動選單用戶端。
+點選選單列上的音符圖示即可開啟播放控制。當然也可以把這個 App 放進 `~/Applications` 裡面，當成一般的 App。
 
-### 執行 Linux 選單用戶端
+---
+
+(以下尚未驗證)
+
+執行 Linux 選單用戶端
 
 在 Linux 上，`make menu` 會編譯 release 版。請在提供 StatusNotifierItem host
 的桌面工作階段執行 `./target/release/ngai-tunes --menu`。如果程式有執行但圖示
@@ -111,6 +150,11 @@ busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher 
 面板或擴充套件。
 
 [cargo-bundle]: https://github.com/burtonageo/cargo-bundle
+
+
+## 開發
+
+另請參閱[規格](AGENTS.md)和[架構](docs/ARCH.md)。
 
 ## 設定
 
