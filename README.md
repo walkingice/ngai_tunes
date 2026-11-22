@@ -53,8 +53,8 @@ Press uppercase `T` to focus Tabs, then Up/Down to select Settings and Enter
 to open it. Press Tab from Tabs to return to Main.
 Select a directory path to edit it, or select its Delete button to confirm
 removal. Add directory creates a target. The Scan button asks for confirmation; scanning is not implemented yet.
-Targets are saved in `config.json` under `scan_directories`. When the TUI exits,
-it saves changed Scanned filter and song positions under `scanned`. On
+Targets are saved in `config.json` under `tui.scan_directories`. When the TUI exits,
+it saves changed Scanned filter and song positions under `tui.scanned`. On
 reopening, invalid positions fall back to All for filters and the first row
 for songs.
 
@@ -107,14 +107,22 @@ that provides a StatusNotifierItem host.
 
 ## Configuration
 
-Settings are stored in `~/.config/ngai_tunes/config.json`.
+Settings are stored in `~/.config/ngai_tunes/config.json`. The `server` section
+holds playback repeat mode. The `tui` section holds notice durations, scan
+targets, and Scanned positions. Move any existing top-level settings into
+their respective sections to reuse a config from an earlier version.
 
 ```json
 {
-  "info_seconds": 5,
-  "warning_seconds": 5,
-  "error_seconds": 10,
-  "repeat": "Off"
+  "server": {
+    "repeat": "Off"
+  },
+  "tui": {
+    "info_seconds": 5,
+    "warning_seconds": 5,
+    "error_seconds": 10,
+    "scan_directories": []
+  }
 }
 ```
 
@@ -122,5 +130,5 @@ Omitted values use the defaults shown above. Notification durations are in
 seconds. Warnings appear in yellow and errors in red. Invalid or unreadable
 configuration falls back to defaults and prints an error on startup.
 
-The daemon saves changes to `repeat` and restores the setting on startup.
+The daemon saves changes to `server.repeat` and restores the setting on startup.
 The supported values are `Off`, `All`, and `One`.

@@ -74,7 +74,8 @@ through a channel. The client estimates elapsed time between snapshots.
 - [library.rs](../src/client/library.rs) loads the database on a background
   thread and builds the Genres, Artists and Albums filters and song list.
   The UI polls for scan and library results alongside socket and key events.
-- [config.rs](../src/storage/config.rs) stores scan roots, notice durations
-  and repeat mode in `~/.config/ngai_tunes/config.json`, beside the database.
+- [config.rs](../src/storage/config.rs) stores repeat mode under `server` and scan
+  roots, notice durations, and Scanned positions under `tui` in
+  `~/.config/ngai_tunes/config.json`, beside the database.
   Writers take a file lock and replace the config by rename. Client saves
   check for competing edits and preserve the daemon's latest repeat setting.
