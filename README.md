@@ -73,7 +73,7 @@ Install [cargo-bundle] once, then run the bundle script from the repository
 root. The script builds the release binary and packages it as `Ngai Tunes.app`.
 
 ```sh
-cargo install --locked cargo-bundle
+cargo install --locked cargo-bundle --version 0.12.0
 sh src/client/menu/bundle-macos.sh
 ```
 

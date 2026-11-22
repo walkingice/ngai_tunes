@@ -193,26 +193,23 @@ fn check_item(label: &str) -> CheckMenuItem {
     CheckMenuItem::new(label, true, false, None)
 }
 
-fn make_icon() -> Result<Icon, tray_icon::BadIcon> {
-    let mut pixels = Vec::with_capacity(32 * 32 * 4);
-    for y in 0_i32..32 {
-        for x in 0_i32..32 {
-            let stem = (17..21).contains(&x) && (6..24).contains(&y);
-            let flag = (19..27).contains(&x) && (6..10).contains(&y);
-            let head = (x - 13).pow(2) + (y - 23).pow(2) <= 31;
-            #[cfg(target_os = "macos")]
-            let color = [0, 0, 0];
-            #[cfg(target_os = "linux")]
-            let color = [66, 153, 225];
-            pixels.extend_from_slice(&[
-                color[0],
-                color[1],
-                color[2],
-                if stem || flag || head { 255 } else { 0 },
-            ]);
-        }
+fn make_icon() -> Result<Icon, Box<dyn Error>> {
+    let svg = include_bytes!("icon.svg");
+    let tree = resvg::usvg::Tree::from_data(svg, &resvg::usvg::Options::default())?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(64, 64).ok_or("Could not allocate icon")?;
+    let scale = resvg::tiny_skia::Transform::from_scale(
+        64.0 / tree.size().width(),
+        64.0 / tree.size().height(),
+    );
+    resvg::render(&tree, scale, &mut pixmap.as_mut());
+    // The SVG is a monochrome mask. Set unpremultiplied RGB for tray-icon.
+    for pixel in pixmap.data_mut().chunks_exact_mut(4) {
+        #[cfg(target_os = "linux")]
+        pixel[..3].copy_from_slice(&[66, 153, 225]);
+        #[cfg(target_os = "macos")]
+        pixel[..3].fill(0);
     }
-    Icon::from_rgba(pixels, 32, 32)
+    Ok(Icon::from_rgba(pixmap.take(), 64, 64)?)
 }
 
 #[cfg(target_os = "linux")]
@@ -287,4 +284,26 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         _ => {}
     });
     error.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn svg_renders_as_a_transparent_tray_icon() {
+        let icon = super::make_icon();
+        assert!(icon.is_ok());
+        let tree = resvg::usvg::Tree::from_data(
+            include_bytes!("icon.svg"),
+            &resvg::usvg::Options::default(),
+        )
+        .unwrap();
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(64, 64).unwrap();
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::identity(),
+            &mut pixmap.as_mut(),
+        );
+        assert_eq!(pixmap.pixel(0, 0).unwrap().alpha(), 0);
+        assert!(pixmap.pixels().iter().any(|pixel| pixel.alpha() == 255));
+    }
 }
