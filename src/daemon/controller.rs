@@ -20,8 +20,8 @@ pub fn validate_queue(queue: &[Track], selected: usize) -> Result<(), &'static s
 }
 
 impl<E: Engine> Controller<E> {
-    pub fn new(engine: E, repeat: Repeat, queue: Vec<Track>) -> Self {
-        let current = (!queue.is_empty()).then_some(0);
+    pub fn new(engine: E, repeat: Repeat, queue: Vec<Track>, restored: Option<usize>) -> Self {
+        let current = restored.or_else(|| (!queue.is_empty()).then_some(0));
         let mut controller = Self {
             engine,
             state: Snapshot {
@@ -49,6 +49,20 @@ impl<E: Engine> Controller<E> {
             state.position_ms = millis(self.engine.position());
         }
         state
+    }
+
+    pub fn queue(&self) -> &[Track] {
+        &self.state.queue
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn started_index_since(&self, generation: u64) -> Option<usize> {
+        self.state
+            .current
+            .filter(|_| self.generation != generation && self.state.status == Status::Playing)
     }
 
     pub fn revision(&self) -> u64 {
@@ -315,7 +329,7 @@ mod tests {
 
     #[test]
     fn pause_stop_restart_and_exit() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new(), None);
         replace(&mut player, &["/one"]);
         player.command(Command::ExitOnStopping).unwrap();
         assert!(!player.shutdown);
@@ -335,7 +349,7 @@ mod tests {
 
     #[test]
     fn skips_broken_tracks_and_ignores_old_end() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new(), None);
         replace(&mut player, &["/one"]);
         let old = player.generation;
         player.command(Command::Pause).unwrap();
@@ -352,7 +366,7 @@ mod tests {
 
     #[test]
     fn random_previous_retraces_order_and_repeat_one_only_affects_eof() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new(), None);
         player.traversal.rng = fastrand::Rng::with_seed(123);
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(&mut player, &["/one", "/two", "/three"]);
@@ -379,7 +393,7 @@ mod tests {
 
     #[test]
     fn device_failure_ends_search_without_shutdown() {
-        let mut player = Controller::new(Fake::default(), Repeat::All, Vec::new());
+        let mut player = Controller::new(Fake::default(), Repeat::All, Vec::new(), None);
         replace(&mut player, &["/device-error", "/two"]);
         let snapshot = player.snapshot();
         assert_eq!(snapshot.status, Status::Stopping);
@@ -391,7 +405,7 @@ mod tests {
 
     #[test]
     fn all_broken_tracks_exhaust_even_with_repeat_all() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new(), None);
         player.command(Command::SetRepeat(Repeat::All)).unwrap();
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(

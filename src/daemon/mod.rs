@@ -7,7 +7,7 @@ use crate::{
         Command, Failure, Message, PlaybackSummary, QueueSegment, QueueTransfer, Request, Snapshot,
         Track, VERSION, WireMessage, encode, encode_segments, read_frame,
     },
-    storage::config::ConfigStore,
+    storage::config::{ConfigStore, PlayingCursor},
 };
 use controller::{Controller, validate_queue};
 use runtime::Runtime;
@@ -74,6 +74,8 @@ impl Drop for Peer {
 struct QueueFrames {
     revision: u64,
     frames: Arc<[Frame]>,
+    fingerprint: u64,
+    saved_index: Option<usize>,
 }
 
 impl QueueFrames {
@@ -84,7 +86,26 @@ impl QueueFrames {
         Ok(Self {
             revision,
             frames: frames.into_iter().map(Frame::from).collect(),
+            fingerprint: PlayingCursor::fingerprint(tracks)?,
+            saved_index: None,
         })
+    }
+
+    fn save_cursor(&mut self, config: Option<&ConfigStore>, playing: Option<usize>) {
+        let (Some(config), Some(index)) = (config, playing) else {
+            return;
+        };
+        if self.saved_index == Some(index) {
+            return;
+        }
+        let cursor = PlayingCursor {
+            fingerprint: self.fingerprint,
+            index,
+        };
+        match config.save_playing_cursor(&cursor) {
+            Ok(()) => self.saved_index = Some(index),
+            Err(error) => eprintln!("Could not save playing cursor: {error}"),
+        }
     }
 
     fn output(&self, peer: &mut Peer, mut output: Output) -> Result<(), ()> {
@@ -145,7 +166,7 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         .and_then(|store| store.load().ok())
         .unwrap_or_default();
     let (tracks, mut queue, error) = restore_queue(config)?;
-    let mut controller = Controller::new(engine, settings.repeat, tracks);
+    let mut controller = Controller::new(engine, settings.repeat, tracks, queue.saved_index);
     if let Some(error) = error {
         controller.set_error(error);
     }
@@ -176,7 +197,9 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         if controller.shutdown {
             break;
         }
+        let generation = controller.generation();
         controller.tick();
+        queue.save_cursor(config, controller.started_index_since(generation));
         if revision != controller.revision() {
             let snapshot = controller.snapshot();
             broadcast_playback(&mut peers, &snapshot);
@@ -231,7 +254,15 @@ type RestoredQueue = (Vec<Track>, QueueFrames, Option<String>);
 fn restore_queue(config: Option<&ConfigStore>) -> io::Result<RestoredQueue> {
     let loaded = config.map_or_else(|| Ok(Vec::new()), ConfigStore::load_playing);
     match loaded.and_then(|tracks| QueueFrames::new(0, &tracks).map(|frames| (tracks, frames))) {
-        Ok((tracks, frames)) => Ok((tracks, frames, None)),
+        Ok((tracks, mut frames)) => {
+            frames.saved_index = config
+                .and_then(ConfigStore::load_playing_cursor)
+                .filter(|cursor| {
+                    cursor.fingerprint == frames.fingerprint && cursor.index < tracks.len()
+                })
+                .map(|cursor| cursor.index);
+            Ok((tracks, frames, None))
+        }
         Err(error) => {
             let error = format!("Could not load playing queue: {error}");
             eprintln!("{error}");
@@ -272,9 +303,11 @@ fn respond(
         }
         return;
     }
+    let generation = controller.generation();
     let Some(response) = handle_request(controller, queue, peer, config, request) else {
         return;
     };
+    queue.save_cursor(config, controller.started_index_since(generation));
     let has_state = response.state.is_some();
     let response = WireMessage::Message {
         queue_revision: has_state.then_some(queue.revision),
@@ -371,23 +404,23 @@ fn complete_upload(
     if let Err(error) = validate_queue(&tracks, selected) {
         return failure("invalid_command", error);
     }
-    let Ok(frames) = QueueFrames::new(controller.revision() + 1, &tracks) else {
-        return failure("frame_size", "A track is too large for a queue segment");
-    };
-    let Some(config) = config else {
-        return failure("config", "Could not save playing queue: HOME is not set");
-    };
-    if let Err(error) = config.save_playing(&tracks) {
-        return failure("config", &format!("Could not save playing queue: {error}"));
+    if tracks != controller.queue() {
+        let Ok(frames) = QueueFrames::new(controller.revision() + 1, &tracks) else {
+            return failure("frame_size", "A track is too large for a queue segment");
+        };
+        let Some(config) = config else {
+            return failure("config", "Could not save playing queue: HOME is not set");
+        };
+        if let Err(error) = config.save_playing(&tracks) {
+            return failure("config", &format!("Could not save playing queue: {error}"));
+        }
+        *queue = frames;
     }
     match controller.command(Command::ReplaceAndPlay {
         queue: tracks,
         selected,
     }) {
-        Ok(()) => {
-            *queue = frames;
-            Some(message(id, None, None))
-        }
+        Ok(()) => Some(message(id, None, None)),
         Err(error) => failure("invalid_command", error),
     }
 }
@@ -719,6 +752,19 @@ mod tests {
             peer.write(&frame);
         }
         assert!(peer.reply(3).error.is_none());
+        use std::os::unix::fs::MetadataExt;
+        let inode = |name| std::fs::metadata(root.path().join(name)).unwrap().ino();
+        let queue_inode = inode("server_playing.jsonl");
+        let cursor_inode = inode("server_playing_cursor.json");
+        peer.request(1, Command::Pause);
+        peer.request(2, Command::Resume);
+        assert_eq!(inode("server_playing_cursor.json"), cursor_inode);
+        for frame in encode_upload(4, &tracks, 0).unwrap() {
+            peer.write(&frame);
+        }
+        assert!(peer.reply(4).error.is_none());
+        assert_eq!(inode("server_playing.jsonl"), queue_inode);
+        peer.request(5, Command::Next);
         peer.request(1, Command::SetRepeat(Repeat::One));
         peer.request(2, Command::Quit);
         server.join().unwrap();
@@ -728,14 +774,40 @@ mod tests {
         let state = peer.request(1, Command::Subscribe).state.unwrap();
         assert_eq!(state.repeat, Repeat::One);
         assert_eq!(state.queue.as_slice(), tracks);
-        assert_eq!(state.current, Some(0));
+        assert_eq!(state.current, Some(1));
         assert_eq!(state.position_ms, 0);
         assert_eq!(state.status, crate::protocol::Status::Stopping);
         peer.request(2, Command::Restart);
         let state = peer.request(3, Command::GetState).state.unwrap();
         assert_eq!(state.status, crate::protocol::Status::Playing);
+        assert_eq!(state.current, Some(1));
         peer.request(4, Command::Quit);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn restored_queue_ignores_an_invalid_cursor() {
+        let root = tempfile::tempdir().unwrap();
+        let config = ConfigStore::new(root.path().join("config.json"));
+        let tracks = [track("First".into()), track("Second".into())];
+        config.save_playing(&tracks).unwrap();
+        let fingerprint = PlayingCursor::fingerprint(&tracks).unwrap();
+        let reordered = [tracks[1].clone(), tracks[0].clone()];
+        for (key, index) in [
+            (PlayingCursor::fingerprint(&reordered).unwrap(), 1),
+            (fingerprint, tracks.len()),
+        ] {
+            config
+                .save_playing_cursor(&PlayingCursor {
+                    fingerprint: key,
+                    index,
+                })
+                .unwrap();
+            let (restored, queue, error) = restore_queue(Some(&config)).unwrap();
+            assert_eq!(restored, tracks);
+            assert!(queue.saved_index.is_none());
+            assert!(error.is_none());
+        }
     }
 
     fn read_playback(peer: &mut TestPeer, id: Option<u64>) -> PlaybackSummary {

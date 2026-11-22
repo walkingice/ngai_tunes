@@ -45,7 +45,7 @@ impl PlayingCursor {
         for track in tracks {
             line.clear();
             serde_json::to_writer(&mut line, track).map_err(io::Error::other)?;
-            for byte in line.iter().copied().chain([b'\n']) {
+            for byte in line.iter().chain(b"\n").copied() {
                 hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
             }
         }
@@ -128,7 +128,8 @@ impl ConfigStore {
         let path = self.path.with_file_name("server_playing_cursor.json");
         let parent = path.parent().filter(|path| !path.as_os_str().is_empty());
         let mut file = tempfile::NamedTempFile::new_in(parent.unwrap_or_else(|| Path::new(".")))?;
-        serde_json::to_writer(file.as_file_mut(), cursor).map_err(io::Error::other)?;
+        let bytes = serde_json::to_vec(cursor).map_err(io::Error::other)?;
+        file.write_all(&bytes)?;
         // Atomic replacement handles daemon termination without forcing a disk flush.
         file.persist(path).map_err(|error| error.error)?;
         Ok(())
