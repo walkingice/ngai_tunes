@@ -31,6 +31,28 @@ impl Default for Config {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct PlayingCursor {
+    pub fingerprint: u64,
+    pub index: usize,
+}
+
+impl PlayingCursor {
+    pub fn fingerprint(tracks: &[Track]) -> io::Result<u64> {
+        // FNV-1a over the JSON Lines representation gives a stable on-disk key.
+        let mut hash = 0xcbf29ce484222325_u64;
+        let mut line = Vec::new();
+        for track in tracks {
+            line.clear();
+            serde_json::to_writer(&mut line, track).map_err(io::Error::other)?;
+            for byte in line.iter().copied().chain([b'\n']) {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+            }
+        }
+        Ok(hash)
+    }
+}
+
 pub struct ConfigStore {
     path: PathBuf,
     lock_root: PathBuf,
@@ -93,6 +115,21 @@ impl ConfigStore {
             writer.flush()?;
         }
         file.as_file().sync_all()?;
+        file.persist(path).map_err(|error| error.error)?;
+        Ok(())
+    }
+
+    pub fn load_playing_cursor(&self) -> Option<PlayingCursor> {
+        let path = self.path.with_file_name("server_playing_cursor.json");
+        serde_json::from_slice(&fs::read(path).ok()?).ok()
+    }
+
+    pub fn save_playing_cursor(&self, cursor: &PlayingCursor) -> io::Result<()> {
+        let path = self.path.with_file_name("server_playing_cursor.json");
+        let parent = path.parent().filter(|path| !path.as_os_str().is_empty());
+        let mut file = tempfile::NamedTempFile::new_in(parent.unwrap_or_else(|| Path::new(".")))?;
+        serde_json::to_writer(file.as_file_mut(), cursor).map_err(io::Error::other)?;
+        // Atomic replacement handles daemon termination without forcing a disk flush.
         file.persist(path).map_err(|error| error.error)?;
         Ok(())
     }
