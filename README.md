@@ -67,13 +67,26 @@ Start the menu client independently of the TUI. While the server is offline,
 TUI to add songs when the queue is empty. **Exit** shuts down the daemon and
 closes the menu client. An open TUI remains usable.
 
-On macOS, build a Finder-launchable app with [cargo-bundle] and the bundle
-script. The app opens the menu bar client and hides its Dock icon.
+### Build the macOS menu bar app
+
+Install [cargo-bundle] once, then run the bundle script from the repository
+root. The script builds the release binary and packages it as `Ngai Tunes.app`.
 
 ```sh
 cargo install --locked cargo-bundle
 sh src/client/menu/bundle-macos.sh
 ```
+
+With the default Cargo target directory, open the app from Finder or run:
+
+```sh
+open "target/release/bundle/osx/Ngai Tunes.app"
+```
+
+Click the music note in the menu bar to open the playback controls. To run
+the menu client directly from a terminal, use `cargo run --release -- --menu`.
+
+### Run the Linux menu client
 
 On Linux, run `ngai-tunes --menu` from a desktop session with a
 StatusNotifierItem host. If the process runs but no icon appears, check for
