@@ -58,7 +58,7 @@ impl<E: Engine> Controller<E> {
     pub fn command(&mut self, command: Command) -> Result<(), &'static str> {
         use Command::*;
         match command {
-            Subscribe | GetState => return Ok(()),
+            Subscribe | SubscribePlayback | GetState => return Ok(()),
             UploadQueue { .. } => return Err("Unexpected queue segment"),
             ReplaceAndPlay { queue, selected } => {
                 validate_queue(&queue, selected)?;

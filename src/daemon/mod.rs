@@ -4,8 +4,8 @@ pub mod runtime;
 use crate::{
     playback::{Audio, Engine},
     protocol::{
-        Command, Failure, Message, QueueSegment, QueueTransfer, Request, Snapshot, Track, VERSION,
-        WireMessage, encode, encode_segments, read_frame,
+        Command, Failure, Message, PlaybackSummary, QueueSegment, QueueTransfer, Request, Snapshot,
+        Track, VERSION, WireMessage, encode, encode_segments, read_frame,
     },
     storage::config::ConfigStore,
 };
@@ -57,6 +57,7 @@ struct Peer {
     output: SyncSender<Output>,
     stream: UnixStream,
     subscribed: bool,
+    playback: Option<PlaybackSummary>,
     queue_revision: Option<u64>,
     upload: Option<PendingUpload>,
     graceful: bool,
@@ -177,9 +178,11 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         }
         controller.tick();
         if revision != controller.revision() {
+            let snapshot = controller.snapshot();
+            broadcast_playback(&mut peers, &snapshot);
             let state = WireMessage::Message {
                 queue_revision: Some(queue.revision),
-                message: message(None, Some(controller.snapshot()), None),
+                message: message(None, Some(snapshot), None),
             };
             if let Ok(frame) = encode(&state) {
                 let frame: Frame = frame.into();
@@ -190,6 +193,37 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         }
     }
     Ok(())
+}
+
+fn broadcast_playback(peers: &mut HashMap<u64, Peer>, snapshot: &Snapshot) {
+    if !peers.values().any(|peer| peer.playback.is_some()) {
+        return;
+    }
+    let summary = PlaybackSummary::from(snapshot);
+    peers.retain(|_, peer| {
+        if peer
+            .playback
+            .as_ref()
+            .is_none_or(|previous| *previous == summary)
+        {
+            return true;
+        }
+        send_playback(peer, None, summary.clone())
+    });
+}
+
+fn send_playback(peer: &mut Peer, request_id: Option<u64>, summary: PlaybackSummary) -> bool {
+    let wire = WireMessage::Playback {
+        request_id,
+        summary: summary.clone(),
+    };
+    if encode(&wire).is_ok_and(|frame| peer.output.try_send(Output::normal(frame.into())).is_ok()) {
+        peer.subscribed = false;
+        peer.playback = Some(summary);
+        true
+    } else {
+        false
+    }
 }
 
 type RestoredQueue = (Vec<Track>, QueueFrames, Option<String>);
@@ -228,6 +262,16 @@ fn respond(
     let Some(peer) = peers.get_mut(&id) else {
         return;
     };
+    if request.version == VERSION && matches!(request.command, Command::SubscribePlayback) {
+        if !send_playback(
+            peer,
+            Some(request.request_id),
+            PlaybackSummary::from(&controller.snapshot()),
+        ) {
+            peers.remove(&id);
+        }
+        return;
+    }
     let Some(response) = handle_request(controller, queue, peer, config, request) else {
         return;
     };
@@ -299,6 +343,9 @@ fn handle_request(
     match controller.command(request.command) {
         Ok(()) => {
             peer.subscribed |= subscribe;
+            if subscribe {
+                peer.playback = None;
+            }
             Some(message(id, snapshot.then(|| controller.snapshot()), None))
         }
         Err(error) => failure("invalid_command", error),
@@ -383,6 +430,7 @@ fn connect_peer(id: u64, stream: UnixStream, input: SyncSender<Input>) -> io::Re
         output,
         stream,
         subscribed: false,
+        playback: None,
         queue_revision: None,
         upload: None,
         graceful: false,
@@ -534,6 +582,7 @@ mod tests {
             output,
             stream,
             subscribed: false,
+            playback: None,
             queue_revision: None,
             upload: None,
             graceful: false,

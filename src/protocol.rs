@@ -53,10 +53,37 @@ pub struct Snapshot {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PlaybackSummary {
+    pub status: Status,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub repeat: Repeat,
+    pub order: Order,
+    pub has_queue: bool,
+    pub error: Option<String>,
+}
+
+impl From<&Snapshot> for PlaybackSummary {
+    fn from(state: &Snapshot) -> Self {
+        let track = state.current.and_then(|index| state.queue.get(index));
+        Self {
+            status: state.status,
+            title: track.map(|track| track.title.clone()),
+            artist: track.and_then(|track| track.artist.clone()),
+            repeat: state.repeat,
+            order: state.order,
+            has_queue: !state.queue.is_empty(),
+            error: state.error.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Subscribe,
+    SubscribePlayback,
     GetState,
     #[serde(skip)]
     ReplaceAndPlay {
@@ -103,6 +130,10 @@ pub struct Message {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireMessage {
+    Playback {
+        request_id: Option<u64>,
+        summary: PlaybackSummary,
+    },
     Queue {
         revision: u64,
         segment: QueueSegment,
@@ -131,6 +162,7 @@ pub struct IncomingState {
 impl IncomingState {
     pub fn receive(&mut self, wire: WireMessage) -> Result<Option<Message>, &'static str> {
         match wire {
+            WireMessage::Playback { .. } => Err("Unexpected playback summary"),
             WireMessage::Queue { revision, segment } => {
                 if let Some(queue) = self.pending.push(revision, segment)? {
                     self.queue = Some((revision, Arc::new(queue)));
