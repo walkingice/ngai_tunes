@@ -8,7 +8,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = env!("CARGO_BIN_NAME"), version, about = "A terminal MP3 and FLAC player")]
+#[command(name = env!("CARGO_BIN_NAME"), version, about = "An MP3 and FLAC player with terminal and menu clients")]
 struct Cli {
     #[arg(long, conflicts_with_all = ["daemon", "directory"])]
     attach: bool,
@@ -16,6 +16,9 @@ struct Cli {
     daemon: bool,
     #[arg(long, hide = true, conflicts_with_all = ["attach", "daemon", "directory"])]
     detached_child: bool,
+    /// Open the menu bar playback controls
+    #[arg(long, conflicts_with_all = ["attach", "daemon", "detached_child", "directory"])]
+    menu: bool,
     #[arg(value_name = "DIRECTORY")]
     directory: Option<PathBuf>,
 }
@@ -34,6 +37,8 @@ fn main() -> std::process::ExitCode {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if cli.daemon || cli.detached_child {
         daemon::run()
+    } else if cli.menu {
+        client::menu::run()
     } else {
         client::tui::run(cli.directory)?;
         Ok(())
@@ -68,7 +73,12 @@ mod tests {
             );
         }
         assert!(Cli::try_parse_from(["player", "--daemon"]).unwrap().daemon);
+        assert!(Cli::try_parse_from(["player", "--menu"]).unwrap().menu);
         for args in [
+            vec!["player", "--menu", "--attach"],
+            vec!["player", "--menu", "--daemon"],
+            vec!["player", "--menu", "--detached-child"],
+            vec!["player", "--menu", "."],
             vec!["player", "--attach", "--daemon"],
             vec!["player", "--attach", "."],
             vec!["player", "--daemon", "."],

@@ -1,8 +1,8 @@
 # ngai_tunes
 
 ngai_tunes is a keyboard-driven MP3 and FLAC player for Linux and
-macOS. Its TUI controls a local daemon so music can continue after the
-terminal closes.
+macOS. Its terminal and menu clients share a local daemon so music can
+continue after the terminal closes.
 
 ## Build
 
@@ -22,6 +22,7 @@ cargo build --release
 ./target/release/ngai-tunes .             # Scan the working directory
 ./target/release/ngai-tunes ~/Music/Jazz  # Scan one directory
 ./target/release/ngai-tunes --daemon      # Run the daemon in the foreground
+./target/release/ngai-tunes --menu        # Open native menu playback controls
 ```
 
 Passing a directory opens Browsing. Without a directory, the app opens Scanned
@@ -58,6 +59,35 @@ In Scanned, Tab cycles from the song list through the filters and Playback.
 Press uppercase `R` to reset all filters to `All`.
 
 See the [SPEC](AGENTS.md) and [architecture](docs/ARCH.md).
+
+## Menu client
+
+Start the menu client independently of the TUI. While the server is offline,
+**Play** starts it and plays the selected track from the saved queue. Use the
+TUI to add songs when the queue is empty. **Exit** shuts down the daemon and
+closes the menu client. An open TUI remains usable.
+
+On macOS, build a Finder-launchable app with [cargo-bundle] and the bundle
+script. The app opens the menu bar client and hides its Dock icon.
+
+```sh
+cargo install --locked cargo-bundle
+sh src/client/menu/bundle-macos.sh
+```
+
+On Linux, run `ngai-tunes --menu` from a desktop session with a
+StatusNotifierItem host. If the process runs but no icon appears, check for
+a host on the session bus.
+
+```sh
+busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
+    org.kde.StatusNotifierWatcher IsStatusNotifierHostRegistered
+```
+
+A missing service or `b false` means the desktop needs a panel or extension
+that provides a StatusNotifierItem host.
+
+[cargo-bundle]: https://github.com/burtonageo/cargo-bundle
 
 ## Configuration
 
