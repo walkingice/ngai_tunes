@@ -21,10 +21,7 @@ pub struct Runtime {
 }
 
 fn unsafe_path() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "Unsafe daemon runtime path",
-    )
+    io::Error::new(io::ErrorKind::PermissionDenied, "Unsafe runtime path")
 }
 
 pub fn verify_directory(root: &Path) -> io::Result<()> {
@@ -35,29 +32,38 @@ pub fn verify_directory(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn prepare_directory(root: &Path) -> io::Result<()> {
+    match DirBuilder::new().mode(0o700).create(root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    verify_directory(root)
+}
+
+pub(crate) fn lock_file(root: &Path, name: &str, operation: libc::c_int) -> io::Result<File> {
+    prepare_directory(root)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(root.join(name))?;
+    let info = lock.metadata()?;
+    if !info.is_file() || info.uid() != unsafe { libc::geteuid() } || info.mode() & 0o077 != 0 {
+        return Err(unsafe_path());
+    }
+    if unsafe { libc::flock(lock.as_raw_fd(), operation) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(lock)
+}
+
 impl Runtime {
     pub fn bind(root: &Path) -> io::Result<Self> {
-        match DirBuilder::new().mode(0o700).create(root) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-        verify_directory(root)?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(root.join("daemon.lock"))?;
-        let info = lock.metadata()?;
-        if !info.is_file() || info.uid() != unsafe { libc::geteuid() } || info.mode() & 0o077 != 0 {
-            return Err(unsafe_path());
-        }
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        let lock = lock_file(root, "daemon.lock", libc::LOCK_EX | libc::LOCK_NB)?;
         let socket = root.join("daemon.sock");
         match fs::symlink_metadata(&socket) {
             Ok(info)

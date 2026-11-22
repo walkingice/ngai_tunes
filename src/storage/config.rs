@@ -1,4 +1,4 @@
-use crate::protocol::Repeat;
+use crate::{daemon::runtime, protocol::Repeat};
 use serde::{Deserialize, Serialize};
 use std::{
     fs, io,
@@ -29,19 +29,23 @@ impl Default for Config {
 
 pub struct ConfigStore {
     path: PathBuf,
+    lock_root: PathBuf,
 }
 
 impl ConfigStore {
+    #[cfg(test)]
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let lock_root = path.with_file_name("runtime");
+        Self { path, lock_root }
     }
 
     pub fn user() -> io::Result<Self> {
         let home = std::env::var_os("HOME")
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
-        Ok(Self::new(
-            PathBuf::from(home).join(".config/ngai_tunes/config.json"),
-        ))
+        Ok(Self {
+            path: PathBuf::from(home).join(".config/ngai_tunes/config.json"),
+            lock_root: PathBuf::from(runtime::ROOT),
+        })
     }
 
     pub fn database(&self) -> super::database::Database {
@@ -81,19 +85,8 @@ impl ConfigStore {
     }
 
     fn lock(&self) -> io::Result<fs::File> {
-        use std::os::fd::AsRawFd;
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent)?;
-        let lock = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(self.path.with_extension("lock"))?;
-        // The lock is held until the file is dropped after the atomic replacement.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(lock)
+        // Keep the lock until the atomic replacement finishes.
+        runtime::lock_file(&self.lock_root, "config.lock", libc::LOCK_EX)
     }
 
     fn save(&self, config: &Config) -> io::Result<()> {
@@ -181,6 +174,8 @@ mod tests {
         let store = ConfigStore::new(dir.path().join("config.json"));
         let original = store.load().unwrap();
         store.save_repeat(Repeat::All).unwrap();
+        assert!(dir.path().join("runtime/config.lock").is_file());
+        assert!(!dir.path().join("config.lock").exists());
         let mut updated = original.clone();
         updated.scan_directories.push("/music".into());
         store.save_if_unchanged(&original, &updated).unwrap();
