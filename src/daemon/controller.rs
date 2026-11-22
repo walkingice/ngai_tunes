@@ -1,6 +1,6 @@
 use crate::{
     playback::{Engine, Event, StartError, millis},
-    protocol::{Command, Order, Repeat, Snapshot, Status},
+    protocol::{Command, Order, Repeat, Snapshot, Status, Track},
 };
 use std::time::Duration;
 
@@ -12,14 +12,22 @@ pub struct Controller<E> {
     pub shutdown: bool,
 }
 
+pub fn validate_queue(queue: &[Track], selected: usize) -> Result<(), &'static str> {
+    if selected >= queue.len() || queue.iter().any(|track| !track.path.is_absolute()) {
+        return Err("Queue needs absolute paths and a valid selection");
+    }
+    Ok(())
+}
+
 impl<E: Engine> Controller<E> {
-    pub fn new(engine: E, repeat: Repeat) -> Self {
-        Self {
+    pub fn new(engine: E, repeat: Repeat, queue: Vec<Track>) -> Self {
+        let current = (!queue.is_empty()).then_some(0);
+        let mut controller = Self {
             engine,
             state: Snapshot {
                 revision: 0,
-                queue: Default::default(),
-                current: None,
+                queue: queue.into(),
+                current,
                 status: Status::Stopping,
                 position_ms: 0,
                 duration_ms: None,
@@ -30,7 +38,9 @@ impl<E: Engine> Controller<E> {
             generation: 0,
             traversal: Traversal::default(),
             shutdown: false,
-        }
+        };
+        controller.reset_cycle();
+        controller
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -51,9 +61,7 @@ impl<E: Engine> Controller<E> {
             Subscribe | GetState => return Ok(()),
             UploadQueue { .. } => return Err("Unexpected queue segment"),
             ReplaceAndPlay { queue, selected } => {
-                if selected >= queue.len() || queue.iter().any(|track| !track.path.is_absolute()) {
-                    return Err("Queue needs absolute paths and a valid selection");
-                }
+                validate_queue(&queue, selected)?;
                 self.state.queue = queue.into();
                 self.state.current = Some(selected);
                 self.reset_cycle();
@@ -171,7 +179,7 @@ impl<E: Engine> Controller<E> {
         Ok(())
     }
 
-    fn set_error(&mut self, mut error: String) {
+    pub fn set_error(&mut self, mut error: String) {
         if error.len() > 1024 {
             error.truncate(error.floor_char_boundary(1024));
         }
@@ -254,7 +262,6 @@ impl Traversal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::Track;
     use std::path::Path;
 
     #[derive(Default)]
@@ -308,7 +315,7 @@ mod tests {
 
     #[test]
     fn pause_stop_restart_and_exit() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off);
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
         replace(&mut player, &["/one"]);
         player.command(Command::ExitOnStopping).unwrap();
         assert!(!player.shutdown);
@@ -328,7 +335,7 @@ mod tests {
 
     #[test]
     fn skips_broken_tracks_and_ignores_old_end() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off);
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
         replace(&mut player, &["/one"]);
         let old = player.generation;
         player.command(Command::Pause).unwrap();
@@ -345,7 +352,7 @@ mod tests {
 
     #[test]
     fn random_previous_retraces_order_and_repeat_one_only_affects_eof() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off);
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
         player.traversal.rng = fastrand::Rng::with_seed(123);
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(&mut player, &["/one", "/two", "/three"]);
@@ -372,7 +379,7 @@ mod tests {
 
     #[test]
     fn device_failure_ends_search_without_shutdown() {
-        let mut player = Controller::new(Fake::default(), Repeat::All);
+        let mut player = Controller::new(Fake::default(), Repeat::All, Vec::new());
         replace(&mut player, &["/device-error", "/two"]);
         let snapshot = player.snapshot();
         assert_eq!(snapshot.status, Status::Stopping);
@@ -384,7 +391,7 @@ mod tests {
 
     #[test]
     fn all_broken_tracks_exhaust_even_with_repeat_all() {
-        let mut player = Controller::new(Fake::default(), Repeat::Off);
+        let mut player = Controller::new(Fake::default(), Repeat::Off, Vec::new());
         player.command(Command::SetRepeat(Repeat::All)).unwrap();
         player.command(Command::SetOrder(Order::Random)).unwrap();
         replace(

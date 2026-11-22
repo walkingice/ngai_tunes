@@ -9,7 +9,7 @@ use crate::{
     },
     storage::config::ConfigStore,
 };
-use controller::Controller;
+use controller::{Controller, validate_queue};
 use runtime::Runtime;
 use std::{
     collections::HashMap,
@@ -143,8 +143,11 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
     let settings = config
         .and_then(|store| store.load().ok())
         .unwrap_or_default();
-    let mut controller = Controller::new(engine, settings.repeat);
-    let mut queue = QueueFrames::new(0, &[])?;
+    let (tracks, mut queue, error) = restore_queue(config)?;
+    let mut controller = Controller::new(engine, settings.repeat, tracks);
+    if let Some(error) = error {
+        controller.set_error(error);
+    }
     while !controller.shutdown {
         for _ in 0..16 {
             match runtime.listener.accept() {
@@ -187,6 +190,20 @@ fn serve(runtime: Runtime, engine: impl Engine, config: Option<&ConfigStore>) ->
         }
     }
     Ok(())
+}
+
+type RestoredQueue = (Vec<Track>, QueueFrames, Option<String>);
+
+fn restore_queue(config: Option<&ConfigStore>) -> io::Result<RestoredQueue> {
+    let loaded = config.map_or_else(|| Ok(Vec::new()), ConfigStore::load_playing);
+    match loaded.and_then(|tracks| QueueFrames::new(0, &tracks).map(|frames| (tracks, frames))) {
+        Ok((tracks, frames)) => Ok((tracks, frames, None)),
+        Err(error) => {
+            let error = format!("Could not load playing queue: {error}");
+            eprintln!("{error}");
+            Ok((Vec::new(), QueueFrames::new(0, &[])?, Some(error)))
+        }
+    }
 }
 
 fn message(id: Option<u64>, state: Option<Snapshot>, error: Option<(&str, &str)>) -> Message {
@@ -262,6 +279,7 @@ fn handle_request(
             controller,
             queue,
             peer,
+            config,
             request.request_id,
             segment,
             selected,
@@ -291,6 +309,7 @@ fn complete_upload(
     controller: &mut Controller<impl Engine>,
     queue: &mut QueueFrames,
     peer: &mut Peer,
+    config: Option<&ConfigStore>,
     request_id: u64,
     segment: QueueSegment,
     selected: Option<usize>,
@@ -302,9 +321,18 @@ fn complete_upload(
         Ok(pending) => pending?,
         Err(error) => return failure("invalid_segment", error),
     };
+    if let Err(error) = validate_queue(&tracks, selected) {
+        return failure("invalid_command", error);
+    }
     let Ok(frames) = QueueFrames::new(controller.revision() + 1, &tracks) else {
         return failure("frame_size", "A track is too large for a queue segment");
     };
+    let Some(config) = config else {
+        return failure("config", "Could not save playing queue: HOME is not set");
+    };
+    if let Err(error) = config.save_playing(&tracks) {
+        return failure("config", &format!("Could not save playing queue: {error}"));
+    }
     match controller.command(Command::ReplaceAndPlay {
         queue: tracks,
         selected,
@@ -621,7 +649,7 @@ mod tests {
         assert!(!socket.exists());
     }
     #[test]
-    fn repeat_mode_survives_daemon_restart() {
+    fn repeat_mode_and_playing_queue_survive_daemon_restart() {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("run");
         let socket = directory.join("daemon.sock");
@@ -632,6 +660,11 @@ mod tests {
         };
         let server = start();
         let mut peer = test_peer(&socket);
+        let tracks = [track("First".into()), track("Second".into())];
+        for frame in encode_upload(3, &tracks, 1).unwrap() {
+            peer.write(&frame);
+        }
+        assert!(peer.reply(3).error.is_none());
         peer.request(1, Command::SetRepeat(Repeat::One));
         peer.request(2, Command::Quit);
         server.join().unwrap();
@@ -640,7 +673,14 @@ mod tests {
         let mut peer = test_peer(&socket);
         let state = peer.request(1, Command::Subscribe).state.unwrap();
         assert_eq!(state.repeat, Repeat::One);
-        peer.request(2, Command::Quit);
+        assert_eq!(state.queue.as_slice(), tracks);
+        assert_eq!(state.current, Some(0));
+        assert_eq!(state.position_ms, 0);
+        assert_eq!(state.status, crate::protocol::Status::Stopping);
+        peer.request(2, Command::Restart);
+        let state = peer.request(3, Command::GetState).state.unwrap();
+        assert_eq!(state.status, crate::protocol::Status::Playing);
+        peer.request(4, Command::Quit);
         server.join().unwrap();
     }
 

@@ -32,6 +32,9 @@ This file defines the user-visible contract for the first release. The
   directory. Accept at most one of `--attach`, `--daemon` and a directory.
 - Multiple clients may share one daemon. Closing a terminal leaves audio
   playing. A daemon exit leaves an open TUI usable with its list and cursor.
+- The daemon saves each accepted Playing queue to `server_playing.jsonl` in
+  the config directory. On startup it restores the queue in Stopping, with
+  the first track selected when available.
 
 ### Library and navigation
 
