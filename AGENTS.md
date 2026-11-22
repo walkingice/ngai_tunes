@@ -41,8 +41,9 @@ This file defines the user-visible contract for the first release. The
   Scan to rebuild the library. Cancelling a scan keeps the previous database.
   A successful scan replaces the database and reloads Scanned.
 - Scanned has Genres, Artists and Albums filters. Move the highlight and press
-  Enter to apply a filter. R resets all three. Enter in Songs queues the
-  filtered list.
+  Enter to apply a filter. Each filter scopes the choices below it in
+  Genres → Artists → Albums → Songs order. Unavailable selections return
+  to All. R resets all three. Enter in Songs queues the filtered list.
 - T focuses Tabs, S focuses Songs where available, and P focuses Playback.
   Tab cycles focus through the page controls and Playback. Outside dialogs,
   h/j/k/l act as left/down/up/right. Dialogs handle their own input.
