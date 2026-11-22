@@ -155,29 +155,3 @@ busctl --user get-property org.kde.StatusNotifierWatcher /StatusNotifierWatcher 
 ## 開發
 
 另請參閱[規格](AGENTS.md)和[架構](docs/ARCH.md)。
-
-## 設定
-
-設定儲存在 `~/.config/ngai_tunes/config.json`。`server` 區段儲存重複播放模式。
-`tui` 區段儲存通知顯示時間、掃描目錄和 Scanned 的游標位置。若要沿用舊版設定，
-請將原本在最外層的設定移到各自對應的區段。
-
-```json
-{
-  "server": {
-    "repeat": "Off"
-  },
-  "tui": {
-    "info_seconds": 5,
-    "warning_seconds": 5,
-    "error_seconds": 10,
-    "scan_directories": []
-  }
-}
-```
-
-省略的欄位會採用上方的預設值。通知顯示時間以秒為單位。警告以黃色顯示，錯誤則以
-紅色顯示。如果設定無效或無法讀取，程式會使用預設值並在啟動時輸出錯誤訊息。
-
-daemon 會儲存 `server.repeat` 的變更，並在啟動時還原設定。
-支援的值為 `Off`、`All` 和 `One`。

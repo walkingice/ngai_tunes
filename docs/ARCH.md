@@ -79,3 +79,31 @@ through a channel. The client estimates elapsed time between snapshots.
   `~/.config/ngai_tunes/config.json`, beside the database.
   Writers take a file lock and replace the config by rename. Client saves
   check for competing edits and preserve the daemon's latest repeat setting.
+
+## Configuration
+
+Settings are stored in `~/.config/ngai_tunes/config.json`. The `server`
+section stores the repeat mode. The `tui` section stores notice durations,
+scan directories, and Scanned cursor positions. To migrate an older
+configuration, move each top-level setting into its corresponding section.
+
+```json
+{
+  "server": {
+    "repeat": "Off"
+  },
+  "tui": {
+    "info_seconds": 5,
+    "warning_seconds": 5,
+    "error_seconds": 10,
+    "scan_directories": []
+  }
+}
+```
+
+Omitted fields use their defaults. Notice durations are measured in seconds.
+Warnings appear in yellow and errors in red. If the configuration is invalid
+or unreadable, the program uses defaults and prints an error at startup.
+
+The daemon saves changes to `server.repeat` and restores the setting at startup.
+Supported values are `Off`, `All`, and `One`.
