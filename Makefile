@@ -1,4 +1,4 @@
-.DEFAULT_GOAL := build
+.DEFAULT_GOAL := help
 
 .PHONY: build debug menu test check fmt fmt-check help
 
@@ -29,10 +29,11 @@ fmt-check:
 
 help:
 	@printf '%s\n' \
-	  'make build      Build the release binary (default)' \
+	  'make build      Build the release binary' \
 	  'make debug      Build the debug binary' \
 	  'make menu       Package the macOS app or build the Linux release binary' \
 	  'make test       Run tests' \
 	  'make check      Check all Cargo targets' \
 	  'make fmt        Format Rust code' \
-	  'make fmt-check  Check Rust formatting'
+	  'make fmt-check  Check Rust formatting' \
+	  'make help       List all targets (default)'

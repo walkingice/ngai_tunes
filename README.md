@@ -11,9 +11,9 @@ Build from the repository root with Rust and Cargo. On Linux, install
 and Ubuntu, or `alsa-lib-devel` on Fedora). macOS uses Core Audio.
 
 ```sh
-make build       # Release binary (also the default for make)
+make build       # Release binary
 make debug       # Debug binary
-make help        # List all targets
+make help        # List all targets (also the default for make)
 ```
 
 ## Usage
