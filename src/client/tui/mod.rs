@@ -4,6 +4,7 @@ use super::{
     ipc::Connection,
     library::{self, Facet, Library},
     recursive_scan::Scan,
+    scan,
 };
 use crate::protocol::{Command, Failure, Message, Order, Repeat, Snapshot, Status, Track};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -17,6 +18,15 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+pub(crate) fn run(directory: Option<PathBuf>) -> io::Result<()> {
+    let tracks = if let Some(path) = &directory {
+        scan::scan(path)?
+    } else {
+        Vec::new()
+    };
+    App::new(directory, tracks, Connection::connect().ok()).run()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Level {
@@ -162,7 +172,7 @@ fn settings_rows(count: usize) -> impl Iterator<Item = SettingsRow> {
         .chain([SettingsRow::Add, SettingsRow::Spacer, SettingsRow::Scan])
 }
 
-pub struct App {
+struct App {
     source: Option<PathBuf>,
     directory_tracks: Vec<Track>,
     directory_cursor: usize,
@@ -186,11 +196,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
-        source: Option<PathBuf>,
-        tracks: Vec<Track>,
-        connection: Option<Connection>,
-    ) -> Self {
+    fn new(source: Option<PathBuf>, tracks: Vec<Track>, connection: Option<Connection>) -> Self {
         let (config_load, config) = ConfigLoad::load(ConfigStore::user());
         let mut app = Self {
             page: if source.is_some() {
@@ -229,7 +235,7 @@ impl App {
         app
     }
 
-    pub fn run(&mut self) -> io::Result<()> {
+    fn run(&mut self) -> io::Result<()> {
         self.reload_library();
         self.initialize();
         let mut terminal = ratatui::try_init()?;

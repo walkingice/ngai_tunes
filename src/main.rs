@@ -35,7 +35,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if cli.daemon || cli.detached_child {
         daemon::run()
     } else {
-        client::run(cli.directory)
+        client::tui::run(cli.directory)?;
+        Ok(())
     }
 }
 

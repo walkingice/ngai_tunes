@@ -10,10 +10,10 @@ See the [user-visible contract](../AGENTS.md) and [UI conventions](STYLE.md).
 1. [main.rs](../src/main.rs) uses clap to dispatch a directory, the default
    attach mode, or the foreground daemon. The private `--detached-child`
    flag runs the same daemon entry point.
-2. [client/mod.rs](../src/client/mod.rs) reads direct children of a directory
+2. The [TUI entry point](../src/client/tui/mod.rs) reads direct children of a directory
    argument before opening the terminal. Both client modes try to connect to
    the existing daemon. A successful connection subscribes immediately.
-3. In [ui.rs](../src/client/ui.rs), `App::songs` chooses among the directory
+3. In the [TUI module](../src/client/tui/mod.rs), `App::songs` chooses among the directory
    list, filtered library and local copy of the Playing queue. Enter on a
    song sends the whole displayed list and its selected index. An empty
    list returns before any connection attempt.

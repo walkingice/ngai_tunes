@@ -27,4 +27,6 @@ Center dialogs over the existing screen and clear their drawing area.
 Leave one cell of padding between the border and content. Place dialog
 buttons on the bottom content row, centered and bold.
 
-The rendering helpers and terminal buffer tests live in [ui.rs](../src/client/ui.rs).
+The rendering helpers live in [render.rs](../src/client/tui/render.rs).
+Terminal buffer tests live in the [TUI module](../src/client/tui/mod.rs)
+and its rendering module.
