@@ -1,5 +1,7 @@
 # ngai_tunes
 
+English · [繁體中文](README_zhTW.md)
+
 ngai_tunes is a keyboard-driven MP3 and FLAC player for Linux and
 macOS. Its terminal and menu clients share a local daemon so music can
 continue after the terminal closes.
@@ -64,7 +66,8 @@ exits at the end of the cycle, and repeat-all starts a new shuffle.
 Press uppercase `T` to focus Tabs, then Up/Down to select Settings and Enter
 to open it. Press Tab from Tabs to return to Main.
 Select a directory path to edit it, or select its Delete button to confirm
-removal. Add directory creates a target. The Scan button asks for confirmation; scanning is not implemented yet.
+removal. Add directory creates a target. Confirm Scan to rebuild the library.
+A successful scan reloads Scanned.
 Targets are saved in `config.json` under `tui.scan_directories`. When the TUI exits,
 it saves changed Scanned filter and song positions under `tui.scanned`. On
 reopening, invalid positions fall back to All for filters and the first row
