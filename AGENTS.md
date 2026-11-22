@@ -45,7 +45,8 @@ This file defines the user-visible contract for the first release. The
   Genres → Artists → Albums → Songs order. Unavailable selections return
   to All. R resets all three. Enter in Songs queues the filtered list.
 - T focuses Tabs, S focuses Songs where available, and P focuses Playback.
-  Tab cycles focus through the page controls and Playback. Outside dialogs,
+  Tab cycles focus through the page controls and Playback. In Scanned, the
+  order is Genres → Artists → Albums → Songs → Playback. Outside dialogs,
   h/j/k/l act as left/down/up/right. Dialogs handle their own input.
 
 ### Playback and exit

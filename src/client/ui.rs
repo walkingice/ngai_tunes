@@ -254,6 +254,7 @@ impl App {
                 .is_some_and(|store| store.database().exists())
         {
             self.page = Page::Scanned;
+            self.focus = self.page.main_focus();
         }
         if self.source.is_none() && self.connection.is_none() {
             self.show_notice(Level::Warning, "No daemon available to attach");
@@ -467,10 +468,9 @@ impl App {
             KeyCode::Char('R') if self.page == Page::Scanned => self.library.reset_filters(),
             KeyCode::Tab => {
                 self.focus = match self.focus {
-                    Focus::Main if self.page == Page::Scanned => Focus::Filter(Facet::Genre),
-                    Focus::Filter(facet) => facet.next().map_or(Focus::Playback, Focus::Filter),
+                    Focus::Filter(facet) => facet.next().map_or(Focus::Main, Focus::Filter),
                     Focus::Main => Focus::Playback,
-                    Focus::Sidebar | Focus::Playback => Focus::Main,
+                    Focus::Sidebar | Focus::Playback => self.page.main_focus(),
                 }
             }
             KeyCode::Char(' ') if self.focus != Focus::Sidebar => self.send(Command::TogglePause),
@@ -825,8 +825,7 @@ mod tests {
         app.key(KeyCode::Down);
         app.key(KeyCode::Enter);
         app.key(KeyCode::Tab);
-        app.key(KeyCode::Tab);
-        assert!(app.focus == Focus::Playback);
+        assert!(app.focus == Focus::Filter(Facet::Album));
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Main);
         assert_eq!(app.songs().0.len(), 1);
@@ -983,7 +982,7 @@ mod tests {
             .unwrap();
         app.initialize();
         assert!(app.page == Page::Scanned);
-        assert!(app.focus == Focus::Main);
+        assert!(app.focus == Focus::Filter(Facet::Genre));
 
         let mut app = App::new(Some(dir.path().into()), Vec::new(), None);
         app.config_load = ConfigLoad::Loaded(ConfigStore::new(config));
@@ -1244,25 +1243,28 @@ mod tests {
             app.key(KeyCode::Down);
             let page = app.page;
             app.key(KeyCode::Tab);
-            assert!(app.focus == Focus::Main);
+            assert!(app.focus == page.main_focus());
             assert!(app.page == page);
             app.page = Page::Playing;
+            app.key(KeyCode::Char('S'));
             app.key(KeyCode::Tab);
             assert!(app.focus == Focus::Playback);
             app.key(KeyCode::Tab);
             assert!(app.focus == Focus::Main);
         }
         app.page = Page::Scanned;
-        app.key(KeyCode::Char('f'));
-        assert!(app.focus == Focus::Main);
-        for facet in Facet::ALL {
+        app.key(KeyCode::Char('T'));
+        for focus in [
+            Focus::Filter(Facet::Genre),
+            Focus::Filter(Facet::Artist),
+            Focus::Filter(Facet::Album),
+            Focus::Main,
+            Focus::Playback,
+            Focus::Filter(Facet::Genre),
+        ] {
             app.key(KeyCode::Tab);
-            assert!(app.focus == Focus::Filter(facet));
+            assert!(app.focus == focus);
         }
-        app.key(KeyCode::Tab);
-        assert!(app.focus == Focus::Playback);
-        app.key(KeyCode::Tab);
-        assert!(app.focus == Focus::Main);
     }
 
     #[test]
@@ -1281,6 +1283,8 @@ mod tests {
         }
 
         app.page = Page::Scanned;
+        app.key(KeyCode::Tab);
+        assert!(app.focus == Focus::Playback);
         app.key(KeyCode::Tab);
         assert!(app.focus == Focus::Filter(Facet::Genre));
         app.key(KeyCode::Char('S'));
