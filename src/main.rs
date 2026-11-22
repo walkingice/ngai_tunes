@@ -23,6 +23,17 @@ struct Cli {
     directory: Option<PathBuf>,
 }
 
+impl Cli {
+    fn opens_menu(&self, bundle_launch: bool) -> bool {
+        self.menu
+            || (bundle_launch
+                && !self.attach
+                && !self.daemon
+                && !self.detached_child
+                && self.directory.is_none())
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -37,7 +48,10 @@ fn main() -> std::process::ExitCode {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if cli.daemon || cli.detached_child {
         daemon::run()
-    } else if cli.menu {
+    } else if cli.opens_menu(
+        cfg!(target_os = "macos")
+            && std::env::var_os("NGAI_TUNES_BUNDLE_MENU").is_some_and(|v| v == "1"),
+    ) {
         client::menu::run()
     } else {
         client::tui::run(cli.directory)?;
@@ -54,6 +68,21 @@ mod tests {
         use clap::CommandFactory;
 
         assert_eq!(Cli::command().get_name(), "ngai-tunes");
+    }
+
+    #[test]
+    fn bundle_launch_defaults_to_menu_only_without_arguments() {
+        let cli = Cli::try_parse_from(["player"]).unwrap();
+        assert!(cli.opens_menu(true));
+        assert!(!cli.opens_menu(false));
+
+        for argument in ["--attach", "--daemon", "--detached-child", "."] {
+            let cli = Cli::try_parse_from(["player", argument]).unwrap();
+            assert!(!cli.opens_menu(true));
+        }
+
+        let cli = Cli::try_parse_from(["player", "--menu"]).unwrap();
+        assert!(cli.opens_menu(false));
     }
 
     #[test]

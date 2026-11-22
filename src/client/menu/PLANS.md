@@ -91,11 +91,11 @@ Exit during reconnect backoff after the TUI starts a daemon.
 ## 5. Package and validate the user workflow
 
 - Use cargo build --release for the CLI and cargo-bundle for the macOS .app.
-  Configure the final Info.plist with LSUIElement true. Provide a bundle
-  entry point that execs the real bundled ngai-tunes with --menu, so Finder
-  launch and no-argument terminal launch select their respective clients.
-  Resolve the executable relative to the bundle, independently of PATH and
-  the working directory. Verify current_exe() in that process launches the
+  Configure the final Info.plist with LSUIElement true. Have Launch
+  Services start the real bundled ngai-tunes directly and select menu mode
+  through LSEnvironment. A shell launcher can start the process without
+  giving its AppKit status item a visible position. Keep the no-argument
+  terminal default and verify current_exe() launches the
   real binary in detached-child mode. Include the tray icon in release builds.
 - Run cargo fmt --check, cargo test and cargo clippy --all-targets. Exercise
   fresh and saved queues. Launch the app from Finder, check the Dock and
