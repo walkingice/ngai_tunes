@@ -7,7 +7,7 @@ use super::{
     scan,
 };
 use crate::protocol::{Command, Failure, Message, Order, Repeat, Snapshot, Status, Track};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
 use std::{
     io,
@@ -283,7 +283,7 @@ impl App {
                 && !(key.kind == KeyEventKind::Repeat
                     && (key.code == KeyCode::Char('q')
                         || (scan_was_running && key.code == KeyCode::Enter)))
-                && self.key(key.code)
+                && self.key_event(key.code, key.modifiers)
             {
                 return Ok(());
             }
@@ -451,6 +451,19 @@ impl App {
             })
     }
 
+    fn key_event(&mut self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        let key = if self.scan_dialog.is_none() && modifiers == KeyModifiers::CONTROL {
+            match key {
+                KeyCode::Char('u') => KeyCode::PageUp,
+                KeyCode::Char('d') => KeyCode::PageDown,
+                key => key,
+            }
+        } else {
+            key
+        };
+        self.key(key)
+    }
+
     fn key(&mut self, key: KeyCode) -> bool {
         if self.scan_dialog.is_some() {
             self.scan_dialog_key(key);
@@ -506,9 +519,10 @@ impl App {
 
     fn filter_key(&mut self, facet: Facet, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Down => {
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+                let page_size = self.scroll_offsets.facet_height.get();
                 let filter = self.library.filter_mut(facet);
-                filter.cursor = move_cursor(filter.cursor, filter.row_count(), key);
+                filter.cursor = move_cursor(filter.cursor, filter.row_count(), key, page_size);
             }
             KeyCode::Enter => self.library.apply(facet),
             _ => {}
@@ -517,16 +531,28 @@ impl App {
 
     fn main_key(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Down if self.page == Page::Scan => {
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                if self.page == Page::Scan =>
+            {
                 let actions = settings_rows(self.config.scan_directories.len())
                     .filter(|row| *row != SettingsRow::Spacer)
                     .count();
-                self.scan_cursor = move_cursor(self.scan_cursor, actions, key);
+                self.scan_cursor = move_cursor(
+                    self.scan_cursor,
+                    actions,
+                    key,
+                    self.scroll_offsets.main_height.get(),
+                );
             }
             KeyCode::Enter if self.page == Page::Scan => self.scan_activate(),
-            KeyCode::Up | KeyCode::Down => {
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
                 let (songs, cursor) = self.songs();
-                let cursor = move_cursor(cursor, songs.len(), key);
+                let cursor = move_cursor(
+                    cursor,
+                    songs.len(),
+                    key,
+                    self.scroll_offsets.main_height.get(),
+                );
                 match self.page {
                     Page::Scanned => self.library.cursor = cursor,
                     Page::Browsing => self.directory_cursor = cursor,
@@ -779,17 +805,40 @@ impl App {
     }
 }
 
-fn move_cursor(cursor: usize, count: usize, key: KeyCode) -> usize {
-    if key == KeyCode::Up {
-        cursor.saturating_sub(1)
-    } else {
-        (cursor + 1).min(count.saturating_sub(1))
+fn move_cursor(cursor: usize, count: usize, key: KeyCode, page_size: usize) -> usize {
+    let distance = match key {
+        KeyCode::PageUp | KeyCode::PageDown => page_size.max(1),
+        _ => 1,
+    };
+    match key {
+        KeyCode::Up | KeyCode::PageUp => cursor.saturating_sub(distance),
+        _ => cursor.saturating_add(distance).min(count.saturating_sub(1)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_keys_move_and_clamp_the_cursor() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.page = Page::Scan;
+        app.focus = Focus::Main;
+        app.config.scan_directories = (0..10).map(|n| n.to_string()).collect();
+        app.scroll_offsets.main_height.set(4);
+        app.key_event(KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(app.scan_cursor, 4);
+        app.key_event(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        assert_eq!(app.scan_cursor, 8);
+        app.key_event(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(app.scan_cursor, 4);
+        app.key_event(KeyCode::PageUp, KeyModifiers::NONE);
+        app.key_event(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(app.scan_cursor, 0);
+        assert_eq!(move_cursor(0, 0, KeyCode::PageDown, 4), 0);
+        assert_eq!(move_cursor(9, 10, KeyCode::PageDown, 4), 9);
+    }
 
     #[test]
     fn settings_rows_keep_spacers_out_of_action_order() {

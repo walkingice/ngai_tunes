@@ -14,6 +14,8 @@ use std::cell::Cell as OffsetCell;
 
 #[derive(Default)]
 pub(super) struct ScrollOffsets {
+    pub(super) main_height: OffsetCell<usize>,
+    pub(super) facet_height: OffsetCell<usize>,
     pages: [OffsetCell<usize>; Page::TABS.len()],
     facets: [OffsetCell<usize>; Facet::ALL.len()],
 }
@@ -145,6 +147,9 @@ impl App {
 
     fn render_scan(&self, frame: &mut Frame, area: Rect) {
         use ratatui::widgets::ListItem;
+        self.scroll_offsets
+            .main_height
+            .set(area.height.saturating_sub(2) as usize);
         let directories = &self.config.scan_directories;
         let rows = settings_rows(directories.len());
         let selected = rows
@@ -226,6 +231,9 @@ impl App {
     fn render_library(&self, frame: &mut Frame, area: Rect) {
         let [facets, songs] =
             Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(area);
+        self.scroll_offsets
+            .facet_height
+            .set(facets.height.saturating_sub(2) as usize);
         let columns = Layout::horizontal([Constraint::Fill(1); Facet::ALL.len()]).split(facets);
         for (index, (facet, &column)) in Facet::ALL.into_iter().zip(columns.iter()).enumerate() {
             let focus = Focus::Filter(facet);
@@ -257,6 +265,9 @@ impl App {
     }
 
     fn render_list(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        self.scroll_offsets
+            .main_height
+            .set(area.height.saturating_sub(3) as usize);
         let (tracks, cursor) = self.songs();
         let current = self
             .snapshot
