@@ -100,19 +100,19 @@ impl App {
         }
         let keys_text = match self.focus {
             Focus::Sidebar => "[Enter] Open",
-            Focus::Filter(_) => "[↑/↓] Move   [Enter] Filter",
-            Focus::Main if self.page == Page::Scan => "[↑/↓] Select   [Enter] Activate",
-            Focus::Main => "[↑/↓] Move   [Enter] ▶   [←/→] Seek   [Space] ▶/⏸",
+            Focus::Filter(_) => "[Enter] Filter",
+            Focus::Main if self.page == Page::Scan => "[Enter] Activate",
+            Focus::Main => "[Enter] ▶   [Space] ▶/⏸",
             Focus::Playback
                 if self
                     .snapshot
                     .as_ref()
                     .is_some_and(|state| state.status == Status::Stopping) =>
             {
-                "[Enter] ↺   [Space] ▶/⏸   [n] Next   [p/N] Previous   [←/→] Seek   [r] Repeat   [o] Order"
+                "[Enter] ↺   [Space] ▶/⏸   [n] Next   [p/N] Previous   [r] Repeat   [o] Order"
             }
             Focus::Playback => {
-                "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [p/N] Previous   [←/→] Seek   [r] Repeat   [o] Order"
+                "[Enter] ⏹   [Space] ▶/⏸   [n] Next   [p/N] Previous   [r] Repeat   [o] Order"
             }
         };
         let songs_key = if self.page == Page::Scan {
