@@ -519,7 +519,12 @@ impl App {
 
     fn filter_key(&mut self, facet: Facet, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Home
+            | KeyCode::End => {
                 let page_size = self.scroll_offsets.facet_height.get();
                 let filter = self.library.filter_mut(facet);
                 filter.cursor = move_cursor(filter.cursor, filter.row_count(), key, page_size);
@@ -531,7 +536,12 @@ impl App {
 
     fn main_key(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Home
+            | KeyCode::End
                 if self.page == Page::Scan =>
             {
                 let actions = settings_rows(self.config.scan_directories.len())
@@ -545,7 +555,12 @@ impl App {
                 );
             }
             KeyCode::Enter if self.page == Page::Scan => self.scan_activate(),
-            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+            KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Home
+            | KeyCode::End => {
                 let (songs, cursor) = self.songs();
                 let cursor = move_cursor(
                     cursor,
@@ -811,6 +826,8 @@ fn move_cursor(cursor: usize, count: usize, key: KeyCode, page_size: usize) -> u
         _ => 1,
     };
     match key {
+        KeyCode::Home => 0,
+        KeyCode::End => count.saturating_sub(1),
         KeyCode::Up | KeyCode::PageUp => cursor.saturating_sub(distance),
         _ => cursor.saturating_add(distance).min(count.saturating_sub(1)),
     }
@@ -838,6 +855,21 @@ mod tests {
         assert_eq!(app.scan_cursor, 0);
         assert_eq!(move_cursor(0, 0, KeyCode::PageDown, 4), 0);
         assert_eq!(move_cursor(9, 10, KeyCode::PageDown, 4), 9);
+    }
+
+    #[test]
+    fn home_and_end_select_list_boundaries() {
+        let mut app = App::new(None, Vec::new(), None);
+        app.page = Page::Scan;
+        app.focus = Focus::Main;
+        app.config.scan_directories = vec!["one".into(), "two".into()];
+        app.key(KeyCode::End);
+        assert_eq!(app.scan_cursor, 5);
+        app.key(KeyCode::Home);
+        assert_eq!(app.scan_cursor, 0);
+        assert_eq!(move_cursor(0, 0, KeyCode::End, 1), 0);
+        assert_eq!(move_cursor(3, 10, KeyCode::End, 1), 9);
+        assert_eq!(move_cursor(3, 10, KeyCode::Home, 1), 0);
     }
 
     #[test]
