@@ -1,3 +1,4 @@
+mod marquee;
 mod native;
 mod session;
 

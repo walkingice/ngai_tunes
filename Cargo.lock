@@ -1702,12 +1702,16 @@ dependencies = [
 name = "ngai_tunes"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "clap",
  "crossbeam-channel",
  "crossterm",
  "fastrand",
  "libc",
  "lofty",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "ratatui",
  "resvg",
  "rodio",
@@ -1716,6 +1720,7 @@ dependencies = [
  "tao",
  "tempfile",
  "tray-icon",
+ "unicode-segmentation",
 ]
 
 [[package]]

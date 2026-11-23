@@ -19,10 +19,15 @@ fastrand = "2"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 crossbeam-channel = "0.5"
+unicode-segmentation = "1"
 resvg = { version = "0.45", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = { version = "=0.26.1", default-features = false }
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSRunLoop", "NSString", "NSTimer", "block2"] }
 tao = { version = "0.35", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
