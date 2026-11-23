@@ -2,7 +2,7 @@ use std::time::Duration;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) const INTERVAL: Duration = Duration::from_millis(350);
-const WINDOW: usize = 40;
+const WINDOW: usize = 25;
 const GAP: &str = "   ";
 
 #[derive(Default)]
@@ -64,6 +64,19 @@ impl Marquee {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrolls_only_when_text_exceeds_twenty_five_characters() {
+        let mut marquee = Marquee::default();
+        let text = "曲".repeat(25);
+        assert_eq!(marquee.set(text.clone()).as_deref(), Some(text.as_str()));
+        assert_eq!(marquee.advance(), None);
+        assert_eq!(
+            marquee.set(format!("{text}終")).as_deref(),
+            Some(text.as_str())
+        );
+        assert_eq!(marquee.advance(), Some(format!("{}終", "曲".repeat(24))));
+    }
 
     #[test]
     fn scrolls_by_grapheme_and_restarts_only_when_text_changes() {

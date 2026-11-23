@@ -14,7 +14,8 @@ If the daemon exits, an open client retains its lists and selection.
 
 The Menu client uses one information row for the current track, formatted as
 `Artist (Length) Title` with unavailable metadata omitted. Connection progress,
-errors, and empty-queue notices use the same row.
+errors, and empty-queue notices use the same row. Text longer than 25 characters
+scrolls one character at a time.
 
 ## Finding and playing music
 

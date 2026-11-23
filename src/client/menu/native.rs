@@ -1,9 +1,10 @@
 use super::{
     Action, Order, Repeat, State,
+    marquee::{INTERVAL, Marquee},
     session::{self, Update},
 };
 use crossbeam_channel::{self as channel, Sender};
-use std::error::Error;
+use std::{cell::RefCell, error::Error, rc::Rc};
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, Submenu},
@@ -12,10 +13,27 @@ use tray_icon::{
 const REPEAT: [Repeat; 3] = [Repeat::Off, Repeat::All, Repeat::One];
 const ORDER: [Order; 2] = [Order::Sequential, Order::Random];
 
+struct InfoRow {
+    item: MenuItem,
+    marquee: RefCell<Marquee>,
+}
+
+impl InfoRow {
+    fn set_text(&self, text: &str) {
+        self.item.set_text(text.replace('&', "&&"));
+    }
+
+    fn advance(&self) {
+        if let Some(text) = self.marquee.borrow_mut().advance() {
+            self.set_text(&text);
+        }
+    }
+}
+
 struct Tray {
     _icon: TrayIcon,
     menu: Menu,
-    status: MenuItem,
+    info: Rc<InfoRow>,
     play: MenuItem,
     pause: MenuItem,
     next: MenuItem,
@@ -58,7 +76,10 @@ impl Tray {
         Ok(Self {
             _icon: icon,
             menu,
-            status,
+            info: Rc::new(InfoRow {
+                item: status,
+                marquee: RefCell::default(),
+            }),
             play,
             pause: MenuItem::new("⏸ Pause", false, None),
             next,
@@ -74,7 +95,9 @@ impl Tray {
 
     fn apply(&mut self, state: State) {
         let summary = state.summary.as_ref();
-        self.status.set_text(state.info_text().replace('&', "&&"));
+        if let Some(text) = self.info.marquee.borrow_mut().set(state.info_text()) {
+            self.info.set_text(&text);
+        }
 
         let action = state.playback_action();
         let (active, hidden, label) = match action {
@@ -206,8 +229,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     session::spawn(requests, move |update| {
         let _ = publish.send(update);
     });
+    let ticks = channel::tick(INTERVAL);
     loop {
         channel::select! {
+            recv(ticks) -> _ => tray.info.advance(),
             recv(MenuEvent::receiver()) -> event => tray.click(event?, &actions),
             recv(updates) -> update => match update? {
                 Update::State(state) => tray.apply(state),
@@ -241,10 +266,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let (actions, requests) = channel::unbounded();
     let mut requests = Some(requests);
     let mut tray = None;
+    let mut timer = None;
     let mut error = None;
     event_loop.run_return(|event, _, flow| match event {
         Event::NewEvents(StartCause::Init) => match Tray::new() {
             Ok(created) => {
+                timer = Some(start_menu_timer(&created.info));
                 tray = Some(created);
                 let proxy = proxy.clone();
                 session::spawn(requests.take().expect("first event"), move |update| {
@@ -269,7 +296,37 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         Event::UserEvent(UiEvent::Update(Update::Close)) => *flow = ControlFlow::Exit,
         _ => {}
     });
+    if let Some(timer) = timer {
+        timer.invalidate();
+    }
     error.map_or(Ok(()), Err)
+}
+
+#[cfg(target_os = "macos")]
+fn start_menu_timer(info: &Rc<InfoRow>) -> objc2::rc::Retained<objc2_foundation::NSTimer> {
+    use block2::RcBlock;
+    use objc2_app_kit::NSEventTrackingRunLoopMode;
+    use objc2_foundation::{NSDefaultRunLoopMode, NSRunLoop, NSTimer};
+    use std::rc::Weak;
+
+    thread_local! {
+        static INFO: RefCell<Weak<InfoRow>> = const { RefCell::new(Weak::new()) };
+    }
+    INFO.with(|slot| slot.replace(Rc::downgrade(info)));
+    let tick = RcBlock::new(|_: std::ptr::NonNull<NSTimer>| {
+        if let Some(info) = INFO.with(|slot| slot.borrow().upgrade()) {
+            info.advance();
+        }
+    });
+    // The block captures no state and the timer is registered on the main run loop.
+    unsafe {
+        let timer =
+            NSTimer::timerWithTimeInterval_repeats_block(INTERVAL.as_secs_f64(), true, &tick);
+        let run_loop = NSRunLoop::mainRunLoop();
+        run_loop.addTimer_forMode(&timer, NSDefaultRunLoopMode);
+        run_loop.addTimer_forMode(&timer, NSEventTrackingRunLoopMode);
+        timer
+    }
 }
 
 #[cfg(test)]
