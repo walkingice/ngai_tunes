@@ -15,10 +15,7 @@ const ORDER: [Order; 2] = [Order::Sequential, Order::Random];
 struct Tray {
     _icon: TrayIcon,
     menu: Menu,
-    title: MenuItem,
-    details: MenuItem,
     status: MenuItem,
-    error: MenuItem,
     play: MenuItem,
     pause: MenuItem,
     next: MenuItem,
@@ -69,9 +66,6 @@ impl Tray {
             exit,
             repeat,
             order,
-            title: MenuItem::new("", false, None),
-            details: MenuItem::new("", false, None),
-            error: MenuItem::new("", false, None),
             repeat_items,
             order_items,
             state: State::default(),
@@ -80,27 +74,15 @@ impl Tray {
 
     fn apply(&mut self, state: State) {
         let summary = state.summary.as_ref();
-        let mut position =
-            usize::from(self.row(&self.title, summary.and_then(|s| s.title.as_deref()), 0));
-        let details = state.track_details();
-        if self.row(&self.details, details.as_deref(), position) {
-            position += 1;
-        }
-        self.status.set_text(state.status_text());
-        let error = state
-            .error
-            .as_deref()
-            .or(state.connection_error.as_deref())
-            .or_else(|| summary.and_then(|s| s.error.as_deref()));
-        position += 1 + usize::from(self.row(&self.error, error, position + 1));
+        self.status.set_text(state.info_text().replace('&', "&&"));
 
         let action = state.playback_action();
         let (active, hidden, label) = match action {
             Action::Pause => (&self.pause, &self.play, "⏸ Pause"),
             _ => (&self.play, &self.pause, "▶ Play"),
         };
-        self.row(hidden, None, position);
-        self.row(active, Some(label), position);
+        self.row(hidden, None, 1);
+        self.row(active, Some(label), 1);
         active.set_enabled(
             state.busy.is_none() && (summary.is_none() || state.command(action).is_some()),
         );

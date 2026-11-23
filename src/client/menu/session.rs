@@ -390,7 +390,7 @@ mod tests {
             Err(channel::RecvTimeoutError::Disconnected)
         ));
         session.receive(Err(channel::RecvError));
-        assert_eq!(session.state.status_text(), "Server offline");
+        assert_eq!(session.state.info_text(), "Server offline");
         assert!(session.connection.is_none());
     }
 

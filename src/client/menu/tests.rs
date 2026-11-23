@@ -50,12 +50,12 @@ fn maps_playback_actions_to_authoritative_state() {
 #[test]
 fn offline_empty_and_busy_states_gate_controls() {
     let mut state = State::default();
-    assert_eq!(state.status_text(), "Server offline");
+    assert_eq!(state.info_text(), "Server offline");
     assert!(state.command(Action::Repeat(Repeat::All)).is_none());
     assert!(matches!(state.command(Action::Exit), Some(Command::Quit)));
 
     state.summary = Some(summary(Status::Stopping, false));
-    assert_eq!(state.status_text(), "Queue empty — add songs in the TUI");
+    assert_eq!(state.info_text(), "Queue empty — add songs in the TUI");
     for action in [Action::Play, Action::Next, Action::Previous] {
         assert!(state.command(action).is_none());
     }
@@ -66,7 +66,7 @@ fn offline_empty_and_busy_states_gate_controls() {
 }
 
 #[test]
-fn track_details_put_duration_before_artist() {
+fn info_row_shows_track_and_replaces_it_with_notices() {
     let mut summary = summary(Status::Playing, true);
     summary.artist = Some("A & B".into());
     summary.duration_ms = Some(185_999);
@@ -74,14 +74,18 @@ fn track_details_put_duration_before_artist() {
         summary: Some(summary),
         ..State::default()
     };
-    assert_eq!(state.track_details().as_deref(), Some("3:05  A & B"));
+    for status in [Status::Playing, Status::Pausing, Status::Stopping] {
+        state.summary.as_mut().unwrap().status = status;
+        assert_eq!(state.info_text(), "A & B (3:05) Song");
+    }
 
     state.summary.as_mut().unwrap().artist = None;
-    assert_eq!(state.track_details().as_deref(), Some("3:05"));
+    assert_eq!(state.info_text(), "(3:05) Song");
+    state.summary.as_mut().unwrap().duration_ms = None;
+    assert_eq!(state.info_text(), "Song");
 
-    let summary = state.summary.as_mut().unwrap();
-    summary.artist = Some("A & B".into());
-    summary.duration_ms = None;
-    assert_eq!(state.track_details().as_deref(), Some("A & B"));
-    assert_eq!(State::default().track_details(), None);
+    state.summary.as_mut().unwrap().error = Some("Playback failed".into());
+    assert_eq!(state.info_text(), "Playback failed");
+    state.busy = Some("Stopping server");
+    assert_eq!(state.info_text(), "Stopping server");
 }

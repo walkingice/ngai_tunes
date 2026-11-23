@@ -24,33 +24,38 @@ struct State {
 }
 
 impl State {
-    fn track_details(&self) -> Option<String> {
-        let summary = self.summary.as_ref()?;
-        let duration = summary.duration_ms.map(super::clock);
+    fn info_text(&self) -> String {
+        let notice = self
+            .busy
+            .or(self.error.as_deref())
+            .or(self.connection_error.as_deref())
+            .or_else(|| self.summary.as_ref()?.error.as_deref());
+        if let Some(notice) = notice {
+            return notice.to_owned();
+        }
+
+        let Some(summary) = &self.summary else {
+            return "Server offline".into();
+        };
+        if !summary.has_queue {
+            return "Queue empty — add songs in the TUI".into();
+        }
+        let Some(title) = summary.title.as_deref().filter(|title| !title.is_empty()) else {
+            return "No current track".into();
+        };
+
         let artist = summary
             .artist
             .as_deref()
             .filter(|artist| !artist.is_empty());
-        match (duration, artist) {
-            (Some(duration), Some(artist)) => Some(format!("{duration}  {artist}")),
-            (Some(duration), None) => Some(duration),
-            (None, artist) => artist.map(str::to_owned),
-        }
-    }
-
-    fn status_text(&self) -> &str {
-        if let Some(busy) = self.busy {
-            return busy;
-        }
-        match &self.summary {
-            Some(summary) if !summary.has_queue => "Queue empty — add songs in the TUI",
-            Some(summary) => match summary.status {
-                Status::Playing => "Playing",
-                Status::Pausing => "Paused",
-                Status::Stopping => "Stopped",
-            },
-            None => "Server offline",
-        }
+        let duration = summary
+            .duration_ms
+            .map(|ms| format!("({})", super::clock(ms)));
+        [artist, duration.as_deref(), Some(title)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn playback_action(&self) -> Action {
