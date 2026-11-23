@@ -1,7 +1,7 @@
 use std::time::Duration;
 use unicode_segmentation::UnicodeSegmentation;
 
-pub(super) const INTERVAL: Duration = Duration::from_millis(350);
+pub(super) const INTERVAL: Duration = Duration::from_secs(1);
 const WINDOW: usize = 25;
 const GAP: &str = "   ";
 

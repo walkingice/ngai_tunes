@@ -271,6 +271,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     event_loop.run_return(|event, _, flow| match event {
         Event::NewEvents(StartCause::Init) => match Tray::new() {
             Ok(created) => {
+                *flow = ControlFlow::Wait;
                 timer = Some(start_menu_timer(&created.info));
                 tray = Some(created);
                 let proxy = proxy.clone();
