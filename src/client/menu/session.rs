@@ -160,10 +160,10 @@ impl Session {
                 self.defer();
             }
             Err(_) => {
-                if self.pending.is_some() {
-                    self.state.error =
-                        Some("Server disconnected before acknowledging the command".into());
-                }
+                self.state.error = self
+                    .pending
+                    .is_some()
+                    .then(|| "Server disconnected before acknowledging the command".into());
                 self.defer();
             }
         }
