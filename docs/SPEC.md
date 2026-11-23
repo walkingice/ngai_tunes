@@ -12,9 +12,9 @@ the client opens with an empty queue and reports that no session is available.
 Multiple clients can share playback. Closing a terminal leaves audio playing.
 If the daemon exits, an open client retains its lists and selection.
 
-The Menu client shows the current track title followed by a row with its total
-duration and artist, when available. Both rows use left-aligned native menu
-items.
+The Menu client uses one information row for the current track, formatted as
+`Artist (Length) Title` with unavailable metadata omitted. Connection progress,
+errors, and empty-queue notices use the same row.
 
 ## Finding and playing music
 
