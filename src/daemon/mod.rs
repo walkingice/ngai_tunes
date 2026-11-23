@@ -845,13 +845,14 @@ mod tests {
         );
         assert!(!read_playback(&mut menu, Some(99)).has_queue);
         let mut uploader = test_peer(&socket);
-        let initial = encode_upload(1, &[track("Initial".into())], 0).unwrap();
+        let mut initial_track = track("Initial".into());
+        initial_track.duration_ms = Some(185_000);
+        let initial = encode_upload(1, &[initial_track], 0).unwrap();
         uploader.write(&initial[0]);
         assert!(uploader.reply(1).error.is_none());
-        assert_eq!(
-            read_playback(&mut menu, None).title.as_deref(),
-            Some("Initial")
-        );
+        let initial = read_playback(&mut menu, None);
+        assert_eq!(initial.title.as_deref(), Some("Initial"));
+        assert_eq!(initial.duration_ms, Some(30_000));
 
         let queue: Vec<_> = (0..205)
             .map(|index| track(format!("{index} {}", "x".repeat(6000))))
