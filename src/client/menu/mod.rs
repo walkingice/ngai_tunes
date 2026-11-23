@@ -24,6 +24,20 @@ struct State {
 }
 
 impl State {
+    fn track_details(&self) -> Option<String> {
+        let summary = self.summary.as_ref()?;
+        let duration = summary.duration_ms.map(super::clock);
+        let artist = summary
+            .artist
+            .as_deref()
+            .filter(|artist| !artist.is_empty());
+        match (duration, artist) {
+            (Some(duration), Some(artist)) => Some(format!("{duration}  {artist}")),
+            (Some(duration), None) => Some(duration),
+            (None, artist) => artist.map(str::to_owned),
+        }
+    }
+
     fn status_text(&self) -> &str {
         if let Some(busy) = self.busy {
             return busy;

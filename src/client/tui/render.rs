@@ -1,4 +1,5 @@
 use super::{App, Facet, Focus, Page, ScanDialog, SettingsRow, settings_rows};
+use crate::client::clock;
 use crate::protocol::{Order, Repeat, Status};
 use ratatui::{
     Frame,
@@ -445,11 +446,6 @@ fn playback_progress(position: u64, duration: Option<u64>, width: u16) -> Line<'
         ),
     ])
     .centered()
-}
-
-fn clock(ms: u64) -> String {
-    let seconds = ms / 1000;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 #[cfg(test)]

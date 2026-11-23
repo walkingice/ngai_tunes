@@ -16,7 +16,7 @@ struct Tray {
     _icon: TrayIcon,
     menu: Menu,
     title: MenuItem,
-    artist: MenuItem,
+    details: MenuItem,
     status: MenuItem,
     error: MenuItem,
     play: MenuItem,
@@ -70,7 +70,7 @@ impl Tray {
             repeat,
             order,
             title: MenuItem::new("", false, None),
-            artist: MenuItem::new("", false, None),
+            details: MenuItem::new("", false, None),
             error: MenuItem::new("", false, None),
             repeat_items,
             order_items,
@@ -80,12 +80,11 @@ impl Tray {
 
     fn apply(&mut self, state: State) {
         let summary = state.summary.as_ref();
-        let mut position = 0;
-        for (item, text) in [
-            (&self.title, summary.and_then(|s| s.title.as_deref())),
-            (&self.artist, summary.and_then(|s| s.artist.as_deref())),
-        ] {
-            position += usize::from(self.row(item, text, position));
+        let mut position =
+            usize::from(self.row(&self.title, summary.and_then(|s| s.title.as_deref()), 0));
+        let details = state.track_details();
+        if self.row(&self.details, details.as_deref(), position) {
+            position += 1;
         }
         self.status.set_text(state.status_text());
         let error = state

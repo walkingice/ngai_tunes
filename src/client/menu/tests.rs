@@ -5,6 +5,7 @@ fn summary(status: Status, has_queue: bool) -> PlaybackSummary {
         status,
         title: has_queue.then(|| "Song".into()),
         artist: None,
+        duration_ms: None,
         repeat: Repeat::Off,
         order: Order::Sequential,
         has_queue,
@@ -62,4 +63,25 @@ fn offline_empty_and_busy_states_gate_controls() {
     state.summary = Some(summary(Status::Stopping, true));
     state.busy = Some("Starting server");
     assert!(state.command(Action::Play).is_none());
+}
+
+#[test]
+fn track_details_put_duration_before_artist() {
+    let mut summary = summary(Status::Playing, true);
+    summary.artist = Some("A & B".into());
+    summary.duration_ms = Some(185_999);
+    let mut state = State {
+        summary: Some(summary),
+        ..State::default()
+    };
+    assert_eq!(state.track_details().as_deref(), Some("3:05  A & B"));
+
+    state.summary.as_mut().unwrap().artist = None;
+    assert_eq!(state.track_details().as_deref(), Some("3:05"));
+
+    let summary = state.summary.as_mut().unwrap();
+    summary.artist = Some("A & B".into());
+    summary.duration_ms = None;
+    assert_eq!(state.track_details().as_deref(), Some("A & B"));
+    assert_eq!(State::default().track_details(), None);
 }

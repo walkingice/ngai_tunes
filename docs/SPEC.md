@@ -12,6 +12,10 @@ the client opens with an empty queue and reports that no session is available.
 Multiple clients can share playback. Closing a terminal leaves audio playing.
 If the daemon exits, an open client retains its lists and selection.
 
+The Menu client shows the current track title followed by a row with its total
+duration and artist, when available. Both rows use left-aligned native menu
+items.
+
 ## Finding and playing music
 
 With a directory argument, Browsing lists MP3 and FLAC files directly inside
